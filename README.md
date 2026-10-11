@@ -57,8 +57,9 @@ with TLS verification, streaming, and header handling).
 | `state.py` | SQLite state & dedup across sessions; URL normalization; 5-minute budget timer; findings store. |
 | `fingerprint.py` | Tech/WAF fingerprint from headers/cookies/body/meta + **security-header analysis** → vuln classes + CVE *candidates* (version guesses flagged low-confidence). |
 | `diff.py` | Snapshot a surface (content hash + endpoints + params), diff vs baseline, rank by freshness + sensitivity. |
-| `probes.py` | **Safe active probes (GET/OPTIONS only, non-destructive)**: reflected-input marker, open-redirect, CORS reflection, method enumeration. Each reports a *candidate*, never a confirmation. |
-| `cli.py` | `stoop` orchestrator: scope gate → deep fingerprint → rank → dedup filter → safe probes → priority table. |
+| `probes.py` | **Safe active probes (GET/OPTIONS only, non-destructive)**: context-aware reflected-input, open-redirect, CORS reflection, method enumeration. Each reports a *candidate*, never a confirmation. |
+| `report.py` | Render stored fingerprint + findings into a structured **Markdown recon report** for triage/disclosure. |
+| `cli.py` | `stoop` orchestrator: scope gate → deep fingerprint → rank → dedup filter → safe probes → priority table → report. |
 
 Deep fingerprint (`stoop run`) fetches the home page **plus a 404 error page and
 an OPTIONS request** — error pages often reveal a WAF the home page hides, and
@@ -108,6 +109,13 @@ stoop probe https://app.target.com/login --scope "*.target.com" --json probe.jso
 # disable individual checks: --no-reflection --no-redirect --no-cors --no-methods
 ```
 
+### Markdown report
+
+```bash
+# aggregate stored fingerprint + findings for a host into a triage report
+stoop report https://app.target.com --out report.md
+```
+
 ### Resume last session
 
 ```bash
@@ -143,9 +151,11 @@ IDOR/mass-assignment, viewstate/padding-oracle, debug/actuator leaks,
 dangerous-methods/XST, and security-header gaps (missing HSTS/CSP, clickjacking,
 CORS-misconfig, mime-sniffing, version-disclosure).
 
-**Active-probe candidates (safe, GET/OPTIONS):** reflected-input (XSS lead),
-open-redirect, CORS reflection (with/without credentials), dangerous HTTP
-methods. All non-destructive and reported as *candidates to verify*.
+**Active-probe candidates (safe, GET/OPTIONS):** context-aware reflected-input
+(classifies HTML/attribute/JS/comment context and which XSS metacharacters
+survive unencoded), open-redirect, CORS reflection (with/without credentials),
+dangerous HTTP methods. All non-destructive and reported as *candidates to
+verify*.
 
 **CVE candidates** (verify-only, version-gated): CVE-2021-41773 (Apache),
 CVE-2020-1938 (Ghostcat), CVE-2022-22965 (Spring4Shell), CVE-2022-26134
@@ -165,7 +175,8 @@ the HTTP gate refusing out-of-scope and unsafe methods *before sending*,
 **streaming body-size cap + audit on success/error**, URL dedup normalization,
 fingerprint inference across every stack/WAF/security-header case above, deep
 fingerprint (404 WAF merge + OPTIONS methods), the **safe active probes**
-(reflection/open-redirect/CORS/methods), snapshot diffing, and **full CLI
-pipelines** (`fingerprint`/`diff`/`run`/`probe`/`resume`) driven end-to-end.
+(context-aware reflection/open-redirect/CORS/methods), Markdown report rendering,
+snapshot diffing, and **full CLI pipelines**
+(`fingerprint`/`diff`/`run`/`probe`/`report`/`resume`) driven end-to-end.
 **All HTTP is mocked via faithful `requests.Response` fakes — the suite makes no
 real network calls.**

@@ -68,10 +68,41 @@ def _body_text(resp) -> str:
         return ""
 
 
+_SPECIAL = ['<', '>', '"', "'"]
+
+
+def _reflection_context(body_lower: str, idx: int) -> str:
+    """Classify the HTML context the token landed in (heuristic)."""
+    before = body_lower[:idx]
+    if before.rfind("<script") > before.rfind("</script"):
+        return "js"
+    if before.rfind("<!--") > before.rfind("-->"):
+        return "comment"
+    if before.rfind("<") > before.rfind(">"):
+        return "attribute"   # we are inside a tag, between < and >
+    return "html"
+
+
+def _survived_specials(body: str, marker: str) -> list[str]:
+    """Which of < > " ' appear unencoded in the window right after the marker."""
+    idx = body.find(marker)
+    if idx < 0:
+        return []
+    window = body[idx + len(marker): idx + len(marker) + 8]
+    return [c for c in _SPECIAL if c in window]
+
+
 def probe_reflection(http: StoopHTTP, url: str, param: str = "q") -> ProbeResult | None:
-    """Inject a unique benign token and see if it reflects unencoded."""
-    token = "prgstoop" + secrets.token_hex(4)
-    test_url = _with_param(url, param, token)
+    """Inject a benign canary and classify the reflection context + encoding.
+
+    The canary appends ``"'<>`` after a unique marker so we can see which XSS
+    metacharacters survive unencoded and in what context (HTML text, attribute,
+    JS or comment). Nothing is executed — the value is only reflected — so this
+    stays a non-destructive lead, reported as a candidate to verify.
+    """
+    marker = "prgstoop" + secrets.token_hex(4)
+    canary = marker + "\"'<>"
+    test_url = _with_param(url, param, canary)
     try:
         resp = http.get(test_url)
     except ScopeViolation:
@@ -80,19 +111,44 @@ def probe_reflection(http: StoopHTTP, url: str, param: str = "q") -> ProbeResult
         log("-", f"reflection probe error: {exc}")
         return None
     body = _body_text(resp)
-    if token not in body:
+    if marker not in body:
         return None
+
     ctype = resp.headers.get("Content-Type", "").lower()
     htmlish = "html" in ctype or "<html" in body.lower()
-    # unencoded reflection in an HTML context is the interesting case
-    severity = "medium" if htmlish else "low"
+    context = _reflection_context(body.lower(), body.lower().find(marker.lower()))
+    survived = _survived_specials(body, marker)
+
+    # severity from how exploitable the context+encoding looks
+    if not survived:
+        severity, confidence = "info", "low"
+        lead = "reflected but XSS metacharacters are encoded"
+    elif context == "js":
+        severity, confidence = "high", "medium"
+        lead = "reflected inside a <script> block with unencoded chars"
+    elif context == "html" and "<" in survived and ">" in survived:
+        severity, confidence = "high", "medium"
+        lead = "reflected in HTML text with '<' and '>' unencoded (tag injection)"
+    elif context == "attribute" and ('"' in survived or "'" in survived):
+        severity, confidence = "medium", "medium"
+        lead = "reflected inside an attribute with a quote unencoded (attr breakout)"
+    else:
+        severity, confidence = "low", "low"
+        lead = "reflected with some metacharacters unencoded"
+
+    if not htmlish and severity in ("high", "medium"):
+        # not served as HTML — downgrade (e.g. JSON reflecting input)
+        severity, confidence = "low", "low"
+        lead += " (non-HTML content-type — lower impact)"
+
     return ProbeResult(
         kind="reflected-input", url=test_url, severity=severity,
-        confidence="low",
-        detail=f"param '{param}' reflected unencoded in response "
-               f"(content-type={ctype or 'unknown'}) — candidate reflected XSS, "
-               "verify context/encoding manually",
-        evidence=f"token {token} echoed",
+        confidence=confidence,
+        detail=f"param '{param}': {lead}; context={context}, "
+               f"survived={''.join(survived) or 'none'}, "
+               f"content-type={ctype or 'unknown'} — verify manually",
+        evidence=f"marker {marker} reflected, unencoded chars: "
+                 f"{''.join(survived) or 'none'}",
     )
 
 

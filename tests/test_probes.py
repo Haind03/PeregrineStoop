@@ -3,6 +3,8 @@ from __future__ import annotations
 
 from peregrinestoop.common import ScopeChecker, StoopHTTP
 from peregrinestoop.fingerprint import fingerprint_host_deep, parse_allow
+from urllib.parse import parse_qs, urlsplit, unquote
+
 from peregrinestoop.probes import (
     probe_cors,
     probe_methods,
@@ -11,6 +13,12 @@ from peregrinestoop.probes import (
     run_safe_probes,
 )
 from conftest import FakeSession, make_response
+
+
+def _q(url, key="q"):
+    """Decode a query param from a URL the way a vulnerable app would."""
+    vals = parse_qs(urlsplit(url).query).get(key, [])
+    return unquote(vals[0]) if vals else ""
 
 SCOPE = ScopeChecker.from_patterns(["*.target.com"])
 
@@ -21,20 +29,53 @@ def _http(handler):
 
 # -- reflection ------------------------------------------------------------- #
 
-def test_reflection_detected_when_echoed():
+def test_reflection_html_tag_injection_is_high():
     def handler(m, u, kw):
-        # echo the injected token straight back into an HTML body
-        token = u.split("q=")[-1]
+        raw = _q(u)  # app decodes and echoes verbatim into HTML text
         return make_response(200, {"Content-Type": "text/html"},
-                             f"<p>{token}</p>".encode())
+                             f"<p>{raw}</p>".encode())
     r = probe_reflection(_http(handler), "https://a.target.com/search")
     assert r is not None and r.kind == "reflected-input"
-    assert r.severity == "medium"  # html context
+    assert r.severity == "high"            # '<' and '>' survived in HTML context
+    assert "context=html" in r.detail
+
+
+def test_reflection_encoded_is_info():
+    def handler(m, u, kw):
+        raw = _q(u)
+        safe = (raw.replace("<", "&lt;").replace(">", "&gt;")
+                   .replace('"', "&quot;").replace("'", "&#39;"))
+        return make_response(200, {"Content-Type": "text/html"},
+                             f"<p>{safe}</p>".encode())
+    r = probe_reflection(_http(handler), "https://a.target.com/search")
+    assert r is not None and r.severity == "info"   # reflected but encoded
+    assert "survived=none" in r.detail
+
+
+def test_reflection_attribute_context_medium():
+    def handler(m, u, kw):
+        raw = _q(u)
+        # reflected inside an attribute value; only the quote matters
+        no_angle = raw.replace("<", "").replace(">", "")
+        return make_response(200, {"Content-Type": "text/html"},
+                             f'<input value="{no_angle}">'.encode())
+    r = probe_reflection(_http(handler), "https://a.target.com/search")
+    assert r is not None and r.severity == "medium"
+    assert "context=attribute" in r.detail
 
 
 def test_reflection_none_when_not_echoed():
     handler = lambda m, u, kw: make_response(200, {}, b"static page")
     assert probe_reflection(_http(handler), "https://a.target.com/") is None
+
+
+def test_reflection_non_html_downgraded():
+    def handler(m, u, kw):
+        raw = _q(u)
+        return make_response(200, {"Content-Type": "application/json"},
+                             f'{{"echo":"{raw}"}}'.encode())
+    r = probe_reflection(_http(handler), "https://a.target.com/api")
+    assert r is not None and r.severity == "low"   # not HTML -> downgraded
 
 
 # -- open redirect ---------------------------------------------------------- #

@@ -33,6 +33,7 @@ from .diff import (
 )
 from .fingerprint import fingerprint_host, fingerprint_host_deep
 from .probes import run_safe_probes
+from .report import render_report
 from .state import BudgetTimer, StateStore
 
 _BANNER = rf"""
@@ -302,6 +303,24 @@ def cmd_probe(args) -> int:
     return 0
 
 
+def cmd_report(args) -> int:
+    store = StateStore(args.state_db)
+    host = urlsplit(args.target).hostname or args.target
+    fp = store.get_fingerprint(host)
+    findings = store.findings(host)
+    store.close()
+    if fp is None and not findings:
+        log("!", f"no stored data for {host} — run 'stoop run' first")
+    md = render_report(host, fp, findings)
+    if args.out:
+        with open(args.out, "w", encoding="utf-8") as fh:
+            fh.write(md)
+        log("+", f"wrote report -> {args.out}")
+    else:
+        print(md)  # stdout
+    return 0
+
+
 def cmd_resume(args) -> int:
     store = StateStore(args.state_db)
     sess = store.resume()
@@ -389,6 +408,12 @@ def build_parser() -> argparse.ArgumentParser:
     pr.add_argument("--no-methods", action="store_true")
     _add_common_flags(pr)
     pr.set_defaults(func=cmd_probe)
+
+    rp = sub.add_parser("report", help="render a Markdown recon report from state")
+    rp.add_argument("target", help="target host or URL (uses stored data)")
+    rp.add_argument("--state-db", default=".stoop_state.sqlite")
+    rp.add_argument("--out", metavar="FILE", help="write Markdown here (else stdout)")
+    rp.set_defaults(func=cmd_report)
 
     rs = sub.add_parser("resume", help="show the last session's state")
     rs.add_argument("--state-db", default=".stoop_state.sqlite")
