@@ -31,7 +31,8 @@ from .diff import (
     snapshot_from_items,
     sensitivity,
 )
-from .fingerprint import fingerprint_host
+from .fingerprint import fingerprint_host, fingerprint_host_deep
+from .probes import run_safe_probes
 from .state import BudgetTimer, StateStore
 
 _BANNER = rf"""
@@ -197,9 +198,9 @@ def cmd_run(args) -> int:
     store.touch_session(sid, host)
     log("*", f"session {sid} target {host} budget {args.budget:.0f}s")
 
-    # 1) fingerprint
+    # 1) deep fingerprint (home + 404 + OPTIONS)
     try:
-        fp = fingerprint_host(http, args.url)
+        fp = fingerprint_host_deep(http, args.url)
     except ScopeViolation as exc:
         log("-", str(exc))
         store.close()
@@ -236,8 +237,24 @@ def cmd_run(args) -> int:
 
     surface.sort(key=lambda d: -d["score"])
 
-    # 3) priority table (console)
-    _print_table(host, fp, surface, timer)
+    # 3) safe active probes (GET/OPTIONS only), budget + dedup aware
+    probes: list[dict] = []
+    if not args.no_active and not timer.expired:
+        if store.seen("PROBE", args.url):
+            log("*", "skip active probes (endpoint already probed)")
+        else:
+            try:
+                for r in run_safe_probes(http, args.url):
+                    probes.append(r.to_dict())
+                    store.record_finding(host, r.kind, r.detail, r.severity)
+                store.mark_tested("PROBE", args.url)
+            except ScopeViolation as exc:
+                log("-", str(exc))
+    elif timer.expired:
+        log("!", "skip active probes — time budget exceeded")
+
+    # 4) priority table (console)
+    _print_table(host, fp, surface, timer, probes)
 
     payload = {
         "session_id": sid,
@@ -246,11 +263,42 @@ def cmd_run(args) -> int:
         "budget_exceeded": timer.expired,
         "fingerprint": fp.to_dict(),
         "surface": surface,
+        "probes": probes,
         "findings": store.findings(host),
     }
     store.touch_session(sid, host)
     store.close()
     _emit_json(args, payload)
+    return 0
+
+
+def cmd_probe(args) -> int:
+    scope = _build_scope(args)
+    sid = new_session_id()
+    http = _build_http(args, scope, sid)
+    store = StateStore(args.state_db)
+    host = urlsplit(args.url).hostname or args.url
+    store.touch_session(sid, host)
+    try:
+        results = run_safe_probes(
+            http, args.url,
+            do_reflection=not args.no_reflection,
+            do_redirect=not args.no_redirect,
+            do_cors=not args.no_cors,
+            do_methods=not args.no_methods,
+        )
+    except ScopeViolation as exc:
+        log("-", str(exc))
+        store.close()
+        return 3
+    for r in results:
+        store.record_finding(host, r.kind, r.detail, r.severity)
+    store.mark_tested("PROBE", args.url)
+    store.close()
+    if not results:
+        log("*", "no candidates surfaced")
+    _emit_json(args, {"target": host, "url": args.url,
+                      "probes": [r.to_dict() for r in results]})
     return 0
 
 
@@ -270,11 +318,13 @@ def cmd_resume(args) -> int:
     return 0
 
 
-def _print_table(host, fp, surface, timer) -> None:
+def _print_table(host, fp, surface, timer, probes=None) -> None:
     line = "-" * 60
     print(line, file=sys.stderr)
     print(f"  PRIORITY SURFACE — {host}", file=sys.stderr)
     print(f"  server={fp.server}  waf={fp.waf}  lang={fp.language}", file=sys.stderr)
+    if fp.allowed_methods:
+        print(f"  methods: {', '.join(fp.allowed_methods)}", file=sys.stderr)
     if fp.vuln_classes:
         print(f"  vuln-classes: {', '.join(fp.vuln_classes)}", file=sys.stderr)
     if fp.cve_candidates:
@@ -284,6 +334,12 @@ def _print_table(host, fp, surface, timer) -> None:
     print(f"  {'SCORE':>5}  {'STATUS':>6}  PATH", file=sys.stderr)
     for s in surface:
         print(f"  {s['score']:>5}  {str(s['status']):>6}  {s['path']}", file=sys.stderr)
+    if probes:
+        print(line, file=sys.stderr)
+        print("  ACTIVE-PROBE CANDIDATES (verify manually):", file=sys.stderr)
+        for p in probes:
+            print(f"  [{p['severity']:>6}] {p['kind']}: {p['detail']}",
+                  file=sys.stderr)
     print(line, file=sys.stderr)
     print(f"  elapsed {timer.elapsed:.1f}s / budget {timer.budget_seconds:.0f}s",
           file=sys.stderr)
@@ -320,8 +376,19 @@ def build_parser() -> argparse.ArgumentParser:
 
     rn = sub.add_parser("run", help="full budgeted pipeline against one target")
     rn.add_argument("url", help="target base URL (must be in scope)")
+    rn.add_argument("--no-active", action="store_true",
+                    help="skip safe active probes (fingerprint + path map only)")
     _add_common_flags(rn)
     rn.set_defaults(func=cmd_run)
+
+    pr = sub.add_parser("probe", help="safe active probes (GET/OPTIONS only)")
+    pr.add_argument("url", help="target URL (must be in scope)")
+    pr.add_argument("--no-reflection", action="store_true")
+    pr.add_argument("--no-redirect", action="store_true")
+    pr.add_argument("--no-cors", action="store_true")
+    pr.add_argument("--no-methods", action="store_true")
+    _add_common_flags(pr)
+    pr.set_defaults(func=cmd_probe)
 
     rs = sub.add_parser("resume", help="show the last session's state")
     rs.add_argument("--state-db", default=".stoop_state.sqlite")

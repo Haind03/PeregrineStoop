@@ -129,3 +129,53 @@ def test_resume_after_run(monkeypatch, tmp_path):
     assert rc == 0
     data = json.loads(out.read_text())
     assert data["session"]["target"] == "a.target.com"
+
+
+def test_probe_cmd_offline(monkeypatch, tmp_path):
+    def handler(method, url, kw):
+        if method == "OPTIONS":
+            return make_response(200, {"Allow": "GET, PUT, DELETE"}, b"")
+        if any(f"{p}=" in url for p in ("url", "next", "redirect")):
+            return make_response(302, {"Location": "https://stoop-oob.example/"}, b"")
+        return make_response(200, {}, b"")
+    _patch_http(monkeypatch, handler)
+    out = tmp_path / "probe.json"
+    rc = cli.main([
+        "probe", "https://a.target.com/login",
+        "--scope", "*.target.com",
+        "--state-db", str(tmp_path / "s.sqlite"),
+        "--audit-log", str(tmp_path / "a.jsonl"),
+        "--json", str(out),
+    ])
+    assert rc == 0
+    kinds = {p["kind"] for p in json.loads(out.read_text())["probes"]}
+    assert "dangerous-methods" in kinds
+    assert "open-redirect" in kinds
+
+
+def test_run_includes_probes_and_no_active_skips(monkeypatch, tmp_path):
+    def handler(method, url, kw):
+        if method == "OPTIONS":
+            return make_response(200, {"Allow": "GET, TRACE"}, b"")
+        return make_response(200, {"Server": "nginx"}, b"<html>x</html>")
+    _patch_http(monkeypatch, handler)
+
+    out = tmp_path / "run.json"
+    cli.main([
+        "run", "https://a.target.com/", "--scope", "*.target.com",
+        "--budget", "60", "--state-db", str(tmp_path / "s.sqlite"),
+        "--audit-log", str(tmp_path / "a.jsonl"), "--json", str(out),
+    ])
+    data = json.loads(out.read_text())
+    assert data["fingerprint"]["allowed_methods"] == ["GET", "TRACE"]
+    assert any(p["kind"] == "dangerous-methods" for p in data["probes"])
+
+    # --no-active path: fresh DB so dedup does not interfere
+    out2 = tmp_path / "run2.json"
+    cli.main([
+        "run", "https://a.target.com/", "--scope", "*.target.com",
+        "--no-active", "--budget", "60",
+        "--state-db", str(tmp_path / "s2.sqlite"),
+        "--audit-log", str(tmp_path / "a2.jsonl"), "--json", str(out2),
+    ])
+    assert json.loads(out2.read_text())["probes"] == []

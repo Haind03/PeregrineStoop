@@ -24,7 +24,10 @@ __all__ = [
     "Fingerprint",
     "fingerprint_response",
     "fingerprint_host",
+    "fingerprint_host_deep",
     "analyze_security_headers",
+    "detect_waf",
+    "parse_allow",
 ]
 
 _META_GENERATOR = re.compile(
@@ -191,6 +194,7 @@ class Fingerprint:
     vuln_classes: list[str] = field(default_factory=list)
     cve_candidates: list[dict] = field(default_factory=list)
     security_headers: dict = field(default_factory=dict)
+    allowed_methods: list[str] = field(default_factory=list)
     notes: list[str] = field(default_factory=list)
 
     def add_tech(self, name: str, confidence: str, evidence: str) -> None:
@@ -215,6 +219,7 @@ class Fingerprint:
             "vuln_classes": self.vuln_classes,
             "cve_candidates": self.cve_candidates,
             "security_headers": self.security_headers,
+            "allowed_methods": self.allowed_methods,
             "notes": self.notes,
         }
 
@@ -359,7 +364,19 @@ def fingerprint_response(
             fp.add_tech(name, "medium", f"body marker {marker.decode('latin-1')!r}")
             fp.add_vuln(vulns)
 
-    # WAF / CDN
+    detect_waf(fp, h, cookie_blob, body)
+    analyze_security_headers(fp, h)
+    _route_cves(fp)
+    return fp
+
+
+def detect_waf(fp: Fingerprint, h: dict[str, str], cookie_blob: str,
+               body: bytes) -> None:
+    """Match WAF/CDN signatures and record them on ``fp`` (idempotent).
+
+    Separated so it can be re-run against an error page (404/403), where WAFs
+    often reveal themselves even when the home page does not.
+    """
     for name, kind, hdr_checks, cookie_checks, body_checks in _WAF_SIGS:
         hit, evidence = False, ""
         for hk, hv in hdr_checks:
@@ -385,9 +402,12 @@ def fingerprint_response(
                 fp.waf = name
             fp.add_tech(name, "high", evidence)
 
-    analyze_security_headers(fp, h)
-    _route_cves(fp)
-    return fp
+
+def parse_allow(headers: Mapping[str, str]) -> list[str]:
+    """Extract HTTP methods advertised in an ``Allow`` header."""
+    h = _lower_headers(headers)
+    raw = h.get("allow") or h.get("access-control-allow-methods") or ""
+    return sorted({m.strip().upper() for m in raw.split(",") if m.strip()})
 
 
 # Illustrative, non-exhaustive routing. Each entry is a CANDIDATE to verify —
@@ -475,3 +495,57 @@ def fingerprint_host(http: StoopHTTP, base_url: str) -> Fingerprint:
     log("*", f"fingerprinted {host}: server={fp.server} waf={fp.waf} "
              f"tech={[t['name'] for t in fp.tech]}")
     return fp
+
+
+_UNSAFE_METHODS = {"PUT", "DELETE", "PATCH", "TRACE", "CONNECT"}
+
+
+def fingerprint_host_deep(http: StoopHTTP, base_url: str) -> Fingerprint:
+    """Multi-probe fingerprint: home page + a 404 error page + OPTIONS.
+
+    The 404 page is re-run through WAF detection (error pages often reveal a
+    WAF that the home page hides). OPTIONS parses the ``Allow`` header to
+    enumerate advertised methods and flag dangerous ones (TRACE/PUT/DELETE).
+    All requests are GET/OPTIONS, scope-gated and audited.
+    """
+    from urllib.parse import urljoin, urlsplit
+
+    fp = fingerprint_host(http, base_url)
+
+    # 1) error page -> extra WAF signal
+    err_url = urljoin(base_url, f"/stoop-404-{uuid_hex()}")
+    try:
+        er = http.get(err_url)
+        detect_waf(fp, _lower_headers(dict(er.headers)),
+                   "", er.content or b"")
+        fp.notes.append(f"error-page probe {er.status_code} {err_url}")
+    except Exception as exc:  # noqa: BLE001 - best effort
+        fp.notes.append(f"error-page probe failed: {exc}")
+
+    # 2) OPTIONS -> allowed methods
+    try:
+        opt = http.options(base_url)
+        methods = parse_allow(dict(opt.headers))
+        if methods:
+            fp.allowed_methods = methods
+            dangerous = sorted(set(methods) & _UNSAFE_METHODS)
+            if dangerous:
+                fp.add_vuln(["dangerous-methods"])
+                fp.notes.append(
+                    f"OPTIONS advertises {', '.join(dangerous)} — verify they are "
+                    "intentional (state-changing / XST risk)")
+            if "TRACE" in methods:
+                fp.add_vuln(["xst"])
+    except Exception as exc:  # noqa: BLE001
+        fp.notes.append(f"OPTIONS probe failed: {exc}")
+
+    host = urlsplit(base_url).hostname or base_url
+    log("*", f"deep fingerprint {host}: methods={fp.allowed_methods} "
+             f"waf={fp.waf}")
+    return fp
+
+
+def uuid_hex() -> str:
+    import uuid as _uuid
+
+    return _uuid.uuid4().hex[:8]
