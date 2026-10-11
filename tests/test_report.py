@@ -37,6 +37,25 @@ def test_render_contains_core_sections():
     assert "candidate" in md.lower()
 
 
+def test_render_includes_cvss_templates():
+    md = render_report("a.target.com", None, [
+        {"severity": "medium", "kind": "reflected-input", "detail": "ctx html"},
+        {"severity": "high", "kind": "open-redirect", "detail": "param next"},
+        {"severity": "info", "kind": "reachable-path", "detail": "/robots"},
+    ])
+    assert "Suggested CVSS 3.1 starting vectors" in md
+    assert "CVSS:3.1/AV:N/AC:L/PR:N/UI:R/S:C/C:L/I:L/A:N" in md  # reflected-input
+    assert "verify before use" in md.lower()
+    # reachable-path has no CVSS hint -> not listed in the vector table
+    assert md.count("reachable-path") == 1  # only in findings table
+
+
+def test_no_cvss_section_when_no_hintable_kinds():
+    md = render_report("x.com", None,
+                       [{"severity": "info", "kind": "reachable-path", "detail": "/x"}])
+    assert "Suggested CVSS" not in md
+
+
 def test_render_handles_empty():
     md = render_report("x.com", None, [])
     assert "No findings recorded yet." in md

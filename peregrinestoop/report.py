@@ -22,6 +22,31 @@ def _sev_key(f: dict) -> int:
     return _SEV_ORDER.get((f.get("severity") or "info").lower(), 3)
 
 
+# Suggested CVSS 3.1 *starting* vectors per finding kind. These are templates to
+# adapt, NOT scores to report — the real metrics depend on the asset, the data
+# exposed, and confirmation. Scope/Confidentiality in particular must be
+# re-judged per target.
+_CVSS_HINTS = {
+    "reflected-input": (
+        "CVSS:3.1/AV:N/AC:L/PR:N/UI:R/S:C/C:L/I:L/A:N",
+        "reflected XSS baseline (user interaction, scope change into the page)"),
+    "open-redirect": (
+        "CVSS:3.1/AV:N/AC:L/PR:N/UI:R/S:C/C:L/I:N/A:N",
+        "open redirect; raise if it enables token theft / OAuth chaining"),
+    "cors-reflection": (
+        "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:C/C:H/I:N/A:N",
+        "credentialed CORS reflection exposing authed data; drop C if no creds"),
+    "dangerous-methods": (
+        "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:L/I:L/A:N",
+        "depends on whether the method is actually actionable (PUT/DELETE)"),
+}
+
+
+def cvss_hint(kind: str) -> tuple[str, str] | None:
+    """Return a (vector, rationale) starting template for a finding kind."""
+    return _CVSS_HINTS.get(kind)
+
+
 def render_report(host: str, fingerprint: dict | None, findings: list[dict]) -> str:
     """Render a Markdown report. Pure function — no I/O, fully testable."""
     now = time.strftime("%Y-%m-%d %H:%M:%SZ", time.gmtime())
@@ -112,6 +137,25 @@ def render_report(host: str, fingerprint: dict | None, findings: list[dict]) -> 
     else:
         add("_No findings recorded._")
     add("")
+
+    # -- CVSS starting vectors --------------------------------------------- #
+    kinds_present = []
+    for f in findings:
+        k = f.get("kind", "")
+        if k not in kinds_present and cvss_hint(k):
+            kinds_present.append(k)
+    if kinds_present:
+        add("## Suggested CVSS 3.1 starting vectors (verify before use)")
+        add("")
+        add("> Templates only. Re-judge every metric against the actual asset "
+            "and confirmed impact; do **not** report an unverified score.")
+        add("")
+        add("| Kind | Starting vector | Rationale |")
+        add("|---|---|---|")
+        for k in kinds_present:
+            vec, why = cvss_hint(k)
+            add(f"| {k} | `{vec}` | {why} |")
+        add("")
 
     # -- Methodology ------------------------------------------------------- #
     add("## Methodology & tooling")

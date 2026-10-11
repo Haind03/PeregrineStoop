@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import secrets
 from dataclasses import dataclass, field
+from html.parser import HTMLParser
 from urllib.parse import urlencode, urlsplit, urlunsplit
 
 from .common import ScopeViolation, StoopHTTP, log
@@ -70,17 +71,83 @@ def _body_text(resp) -> str:
 
 _SPECIAL = ['<', '>', '"', "'"]
 
+# which context a browser would treat the reflection as — most to least severe
+_CTX_PRIORITY = ["js", "html", "attribute", "comment", "css"]
 
-def _reflection_context(body_lower: str, idx: int) -> str:
-    """Classify the HTML context the token landed in (heuristic)."""
-    before = body_lower[:idx]
+
+class _ReflectionDOM(HTMLParser):
+    """stdlib DOM parser that records where a marker lands, as a browser sees it.
+
+    Because the parser models real tokenization, a quote/angle-bracket breakout
+    shows up as the marker appearing in a *different* context than it was
+    injected into — a far stronger signal than substring matching.
+    """
+
+    def __init__(self, marker: str) -> None:
+        super().__init__(convert_charrefs=True)
+        self.marker = marker
+        self.hits: list[tuple[str, str]] = []  # (context, descriptor)
+        self._stack: list[str] = []
+
+    def _attrs(self, tag, attrs):
+        for k, v in attrs:
+            if v and self.marker in v:
+                self.hits.append(("attribute", f"{tag}@{k}"))
+
+    def handle_starttag(self, tag, attrs):
+        self._attrs(tag, attrs)
+        if tag not in ("br", "img", "input", "meta", "link", "hr"):
+            self._stack.append(tag)
+
+    def handle_startendtag(self, tag, attrs):
+        self._attrs(tag, attrs)
+
+    def handle_endtag(self, tag):
+        while self._stack and self._stack.pop() != tag:
+            pass
+
+    def handle_data(self, data):
+        if self.marker in data:
+            cur = self._stack[-1] if self._stack else "body"
+            if cur == "script":
+                self.hits.append(("js", "script"))
+            elif cur == "style":
+                self.hits.append(("css", "style"))
+            else:
+                self.hits.append(("html", cur))
+
+    def handle_comment(self, data):
+        if self.marker in data:
+            self.hits.append(("comment", ""))
+
+
+def _classify_context(body: str, marker: str) -> tuple[str, str]:
+    """Return (context, descriptor) using the DOM parser, with a safe fallback."""
+    try:
+        p = _ReflectionDOM(marker)
+        p.feed(body)
+        p.close()
+        if p.hits:
+            for ctx in _CTX_PRIORITY:
+                for c, desc in p.hits:
+                    if c == ctx:
+                        return c, desc
+            return p.hits[0]
+    except Exception:  # noqa: BLE001 - malformed HTML: fall back
+        pass
+    # fallback heuristic if the parser found nothing
+    bl = body.lower()
+    idx = bl.find(marker.lower())
+    if idx < 0:
+        return "unknown", ""
+    before = bl[:idx]
     if before.rfind("<script") > before.rfind("</script"):
-        return "js"
+        return "js", "script"
     if before.rfind("<!--") > before.rfind("-->"):
-        return "comment"
+        return "comment", ""
     if before.rfind("<") > before.rfind(">"):
-        return "attribute"   # we are inside a tag, between < and >
-    return "html"
+        return "attribute", ""
+    return "html", ""
 
 
 def _survived_specials(body: str, marker: str) -> list[str]:
@@ -116,7 +183,7 @@ def probe_reflection(http: StoopHTTP, url: str, param: str = "q") -> ProbeResult
 
     ctype = resp.headers.get("Content-Type", "").lower()
     htmlish = "html" in ctype or "<html" in body.lower()
-    context = _reflection_context(body.lower(), body.lower().find(marker.lower()))
+    context, where = _classify_context(body, marker)
     survived = _survived_specials(body, marker)
 
     # severity from how exploitable the context+encoding looks
@@ -141,10 +208,11 @@ def probe_reflection(http: StoopHTTP, url: str, param: str = "q") -> ProbeResult
         severity, confidence = "low", "low"
         lead += " (non-HTML content-type — lower impact)"
 
+    loc = f"context={context}" + (f" ({where})" if where else "")
     return ProbeResult(
         kind="reflected-input", url=test_url, severity=severity,
         confidence=confidence,
-        detail=f"param '{param}': {lead}; context={context}, "
+        detail=f"param '{param}': {lead}; {loc}, "
                f"survived={''.join(survived) or 'none'}, "
                f"content-type={ctype or 'unknown'} — verify manually",
         evidence=f"marker {marker} reflected, unencoded chars: "

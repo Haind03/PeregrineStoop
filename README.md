@@ -151,11 +151,18 @@ IDOR/mass-assignment, viewstate/padding-oracle, debug/actuator leaks,
 dangerous-methods/XST, and security-header gaps (missing HSTS/CSP, clickjacking,
 CORS-misconfig, mime-sniffing, version-disclosure).
 
-**Active-probe candidates (safe, GET/OPTIONS):** context-aware reflected-input
-(classifies HTML/attribute/JS/comment context and which XSS metacharacters
-survive unencoded), open-redirect, CORS reflection (with/without credentials),
-dangerous HTTP methods. All non-destructive and reported as *candidates to
-verify*.
+**Active-probe candidates (safe, GET/OPTIONS):** context-aware reflected-input —
+a **stdlib `html.parser` DOM pass** (no extra dependency) classifies the
+reflection context (HTML text / attribute / `<script>` / comment) the way a
+browser tokenizes it, so a quote/bracket breakout shows up as a context change;
+combined with which XSS metacharacters survive unencoded. Plus open-redirect,
+CORS reflection (with/without credentials), and dangerous HTTP methods. All
+non-destructive and reported as *candidates to verify*.
+
+**CVSS scaffolding:** `stoop report` prints a *suggested* CVSS 3.1 starting
+vector per finding kind (reflected-input, open-redirect, CORS, dangerous
+methods), explicitly labelled a template to re-judge — it never reports an
+unverified score.
 
 **CVE candidates** (verify-only, version-gated): CVE-2021-41773 (Apache),
 CVE-2020-1938 (Ghostcat), CVE-2022-22965 (Spring4Shell), CVE-2022-26134

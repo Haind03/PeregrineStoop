@@ -64,6 +64,27 @@ def test_reflection_attribute_context_medium():
     assert "context=attribute" in r.detail
 
 
+def test_reflection_dom_script_context_is_high():
+    def handler(m, u, kw):
+        raw = _q(u)
+        return make_response(200, {"Content-Type": "text/html"},
+                             f'<html><body><script>var q="{raw}";</script>'
+                             f'</body></html>'.encode())
+    r = probe_reflection(_http(handler), "https://a.target.com/search")
+    assert r is not None and r.severity == "high"
+    assert "context=js" in r.detail        # DOM parser knows it's inside <script>
+
+
+def test_reflection_dom_comment_context():
+    def handler(m, u, kw):
+        raw = _q(u)
+        return make_response(200, {"Content-Type": "text/html"},
+                             f"<html><!-- {raw} --></html>".encode())
+    r = probe_reflection(_http(handler), "https://a.target.com/search")
+    assert r is not None
+    assert "context=comment" in r.detail   # correctly attributed to the comment
+
+
 def test_reflection_none_when_not_echoed():
     handler = lambda m, u, kw: make_response(200, {}, b"static page")
     assert probe_reflection(_http(handler), "https://a.target.com/") is None
