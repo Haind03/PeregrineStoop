@@ -75,3 +75,42 @@ def test_scope_gate_runs_before_the_adapter():
     with pytest.raises(ScopeViolation):
         http.get("https://evil.com/")
     assert len(responses.calls) == 0   # no request ever reached the adapter
+
+
+@responses.activate
+def test_real_deflate_body_is_decoded():
+    import zlib
+    payload = b"DEFLATE-PAYLOAD" * 40
+    responses.add(responses.GET, "https://a.target.com/d",
+                  body=zlib.compress(payload),
+                  headers={"Content-Encoding": "deflate"}, status=200)
+    http = StoopHTTP(SCOPE, rate=0)
+    assert http.get("https://a.target.com/d").content == payload
+
+
+@responses.activate
+def test_real_brotli_body_is_decoded():
+    brotli = pytest.importorskip("brotli")
+    payload = b"BROTLI-PAYLOAD" * 40
+    responses.add(responses.GET, "https://a.target.com/b",
+                  body=brotli.compress(payload),
+                  headers={"Content-Encoding": "br"}, status=200)
+    http = StoopHTTP(SCOPE, rate=0)
+    assert http.get("https://a.target.com/b").content == payload
+
+
+@responses.activate
+def test_identity_large_body_capped_real_stack():
+    responses.add(responses.GET, "https://a.target.com/raw",
+                  body=b"Z" * 5000, status=200)   # no Content-Encoding
+    http = StoopHTTP(SCOPE, rate=0, max_body=32)
+    assert len(http.get("https://a.target.com/raw").content) == 32
+
+
+@responses.activate
+def test_head_request_real_stack_no_body():
+    responses.add(responses.HEAD, "https://a.target.com/", status=200,
+                  headers={"Server": "nginx"})
+    http = StoopHTTP(SCOPE, rate=0)
+    r = http.head("https://a.target.com/")
+    assert r.status_code == 200 and r.headers.get("Server") == "nginx"

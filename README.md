@@ -50,9 +50,14 @@ TLS verification, streaming, header handling). The test suite additionally uses
 through the real HTTP adapter without network — it is never imported by the
 package itself.
 
-CVE routing is data-driven: candidates live in
-[`peregrinestoop/data/cve_map.json`](peregrinestoop/data/cve_map.json) and can
-be extended without touching code. Every entry is a *candidate to verify*.
+Detection is **data-driven**: the fingerprint signature tables live in
+[`peregrinestoop/data/signatures.json`](peregrinestoop/data/signatures.json)
+(cookies, Server/X-Powered-By, body markers, WAF/CDN, security headers) and the
+CVE candidates in
+[`peregrinestoop/data/cve_map.json`](peregrinestoop/data/cve_map.json). Both can
+be extended without touching code; every CVE entry is a *candidate to verify*.
+If either file is missing/corrupt the tool degrades gracefully (that detector is
+simply disabled) rather than crashing.
 
 ---
 
@@ -62,7 +67,7 @@ be extended without touching code. Every entry is a *candidate to verify*.
 |------|------|
 | `common.py` | `ScopeChecker`, `StoopHTTP` (scope gate + audit + rate limit + timeout + UA + body cap), colored stderr logging. |
 | `state.py` | SQLite state & dedup across sessions; URL normalization; 5-minute budget timer; findings store. |
-| `fingerprint.py` | Tech/WAF fingerprint from headers/cookies/body/meta + **security-header analysis** → vuln classes + CVE *candidates* (version guesses flagged low-confidence). |
+| `fingerprint.py` | Tech/WAF fingerprint from headers/cookies/body/meta + **security-header analysis** → vuln classes + CVE *candidates* (version guesses flagged low-confidence). Signatures & CVE map load from `data/*.json`. |
 | `diff.py` | Snapshot a surface (content hash + endpoints + params), diff vs baseline, rank by freshness + sensitivity. |
 | `probes.py` | **Safe active probes (GET/OPTIONS only, non-destructive)**: context-aware reflected-input, open-redirect, CORS reflection, method enumeration. Each reports a *candidate*, never a confirmation. |
 | `report.py` | Render stored fingerprint + findings into a structured **Markdown recon report** for triage/disclosure. |
@@ -193,6 +198,8 @@ fingerprint (404 WAF merge + OPTIONS methods), the **safe active probes**
 Markdown report rendering (incl. CVSS templates), snapshot diffing, and **full
 CLI pipelines** (`fingerprint`/`diff`/`run`/`probe`/`report`/`resume`)
 end-to-end. A separate **`responses`-backed integration suite** drives the real
-requests/urllib3 stack — genuine gzip decoding, body-cap on decoded bytes,
-redirect-read-not-followed, scope gate before the adapter. **No test makes a
-real network call**; fakes and `responses` intercept everything.
+requests/urllib3 stack — genuine gzip/deflate (and brotli when available)
+decoding, body-cap on decoded and on identity bodies, redirect-read-not-followed,
+HEAD handling, OPTIONS method enumeration, and the scope gate firing before the
+adapter. **No test makes a real network call**; fakes and `responses` intercept
+everything.

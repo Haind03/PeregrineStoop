@@ -29,6 +29,7 @@ __all__ = [
     "detect_waf",
     "parse_allow",
     "load_cve_map",
+    "load_signatures",
 ]
 
 _META_GENERATOR = re.compile(
@@ -37,151 +38,52 @@ _META_GENERATOR = re.compile(
 )
 
 # --------------------------------------------------------------------------- #
-# Signature tables
+# Signature tables — loaded from data/signatures.json so the lists can be
+# extended without code changes. Body markers are stored as latin-1 strings and
+# re-encoded to bytes here.
 # --------------------------------------------------------------------------- #
 
-# Cookie-name substring -> (tech, language, vuln classes)
-_COOKIE_SIGS = {
-    "phpsessid": ("PHP", "php", ["lfi", "rce-upload", "sqli", "file-inclusion"]),
-    "jsessionid": ("Java servlet (JSP/Tomcat)", "java",
-                   ["deserialization", "ssrf", "path-traversal", "xxe"]),
-    "laravel_session": ("Laravel", "php", ["mass-assignment", "debug-leak", "idor", "sqli"]),
-    "xsrf-token": ("Laravel/Angular (XSRF)", None, ["csrf-token-leak"]),
-    "asp.net_sessionid": ("ASP.NET", "dotnet", ["viewstate-deser", "padding-oracle"]),
-    "aspxauth": ("ASP.NET Forms Auth", "dotnet", ["viewstate-deser", "auth-bypass"]),
-    "ci_session": ("CodeIgniter", "php", ["sqli", "idor"]),
-    "django_session": ("Django", "python", ["ssti", "debug-leak", "idor"]),
-    "sessionid": ("Django", "python", ["ssti", "debug-leak"]),
-    "csrftoken": ("Django (CSRF)", "python", ["csrf"]),
-    "connect.sid": ("Express / Node.js", "nodejs",
-                    ["proto-pollution", "ssrf", "nosqli"]),
-    "_session_id": ("Ruby on Rails", "ruby",
-                    ["deserialization", "secret-key-leak", "mass-assignment"]),
-    "rack.session": ("Rack / Ruby", "ruby", ["deserialization"]),
-    "cfid": ("Adobe ColdFusion", "cfml", ["lfi", "deserialization", "rce"]),
-    "cftoken": ("Adobe ColdFusion", "cfml", ["lfi", "deserialization", "rce"]),
-    "symfony": ("Symfony", "php", ["ssti-twig", "debug-leak", "deserialization"]),
-    "yii": ("Yii Framework", "php", ["sqli", "rce"]),
-    "wordpress_logged_in": ("WordPress", "php", ["plugin-cve", "xmlrpc", "rest-idor"]),
-    "wp-settings": ("WordPress", "php", ["plugin-cve", "xmlrpc", "rest-idor"]),
-    "spring-session": ("Spring", "java", ["spel-injection", "deserialization", "actuator-leak"]),
-    "session-id": ("Generic session", None, ["idor", "session-fixation"]),
-    "incap_ses": ("Imperva (cookie)", None, []),
-}
 
-# Server header substring -> (tech, vuln classes)
-_SERVER_SIGS = [
-    ("nginx", "nginx", ["misrouting", "alias-traversal", "ssrf"]),
-    ("apache-coyote", "Apache Tomcat", ["deserialization", "path-traversal", "ghostcat"]),
-    ("apache", "Apache httpd", ["cgi-rce", "path-traversal"]),
-    ("microsoft-iis", "Microsoft IIS", ["short-name-enum", "webdav", "asp-rce"]),
-    ("litespeed", "LiteSpeed", ["path-traversal"]),
-    ("gunicorn", "Gunicorn (Python)", ["ssti", "debug-leak"]),
-    ("uvicorn", "Uvicorn (ASGI)", ["ssti", "debug-leak"]),
-    ("daphne", "Daphne (Django ASGI)", ["ssti", "debug-leak"]),
-    ("werkzeug", "Werkzeug (Flask)", ["debug-console-rce", "ssti"]),
-    ("express", "Express (Node.js)", ["proto-pollution", "nosqli"]),
-    ("kestrel", "ASP.NET Core (Kestrel)", ["deserialization"]),
-    ("openresty", "OpenResty", ["ssrf", "lua-misconfig"]),
-    ("tengine", "Tengine (nginx fork)", ["ssrf", "alias-traversal"]),
-    ("caddy", "Caddy", ["misrouting"]),
-    ("lighttpd", "lighttpd", ["path-traversal"]),
-    ("jetty", "Eclipse Jetty", ["deserialization", "path-traversal"]),
-    ("tomcat", "Apache Tomcat", ["deserialization", "ghostcat", "path-traversal"]),
-    ("jboss", "JBoss / WildFly", ["deserialization", "jmx-rce"]),
-    ("weblogic", "Oracle WebLogic", ["deserialization", "t3-rce", "ssrf"]),
-    ("websphere", "IBM WebSphere", ["deserialization"]),
-    ("glassfish", "GlassFish", ["deserialization"]),
-    ("passenger", "Phusion Passenger (Ruby)", ["deserialization"]),
-    ("cowboy", "Cowboy (Erlang)", ["ssrf"]),
-    ("gws", "Google Web Server", []),
-]
+def load_signatures() -> dict:
+    """Load and reshape the signature tables from the bundled JSON file.
 
-# X-Powered-By substring -> (tech, language, vuln classes)
-_XPOWERED_SIGS = [
-    ("php", "PHP", "php", ["lfi", "rce-upload", "sqli"]),
-    ("asp.net", "ASP.NET", "dotnet", ["viewstate-deser", "padding-oracle"]),
-    ("express", "Express (Node.js)", "nodejs", ["proto-pollution", "nosqli"]),
-    ("servlet", "Java servlet", "java", ["deserialization"]),
-    ("next.js", "Next.js", "nodejs", ["ssrf", "middleware-bypass"]),
-    ("nuxt", "Nuxt.js", "nodejs", ["ssrf"]),
-    ("phusion passenger", "Phusion Passenger", "ruby", ["deserialization"]),
-    ("jsf", "JavaServer Faces", "java", ["viewstate-deser", "path-traversal"]),
-    ("django", "Django", "python", ["ssti", "debug-leak"]),
-    ("flask", "Flask", "python", ["ssti", "debug-console-rce"]),
-]
+    Returns a dict with keys: cookies, server, xpowered, body, waf,
+    security_headers — in the internal shapes the matcher expects.
+    """
+    import json
+    from pathlib import Path
 
-# Body-marker -> (tech, language or None, vuln classes)
-_BODY_SIGS = [
-    (b"__NEXT_DATA__", "Next.js", "nodejs", ["ssrf", "middleware-bypass"]),
-    (b"wp-content", "WordPress", "php", ["plugin-cve", "xmlrpc", "rest-idor"]),
-    (b"wp-includes", "WordPress", "php", ["plugin-cve", "xmlrpc", "rest-idor"]),
-    (b"/sites/default/files", "Drupal", "php", ["drupalgeddon", "rest-rce"]),
-    (b"Drupal.settings", "Drupal", "php", ["drupalgeddon", "rest-rce"]),
-    (b"/media/jui/", "Joomla", "php", ["sqli", "lfi"]),
-    (b"com_content", "Joomla", "php", ["sqli", "lfi"]),
-    (b"/skin/frontend/", "Magento", "php", ["deserialization", "sqli"]),
-    (b"Mage.Cookies", "Magento", "php", ["deserialization", "sqli"]),
-    (b"ng-version", "Angular", "nodejs", ["dom-xss", "csti"]),
-    (b"data-reactroot", "React", "nodejs", ["dom-xss"]),
-    (b"__vue__", "Vue.js", "nodejs", ["dom-xss", "csti"]),
-    (b"Whitelabel Error Page", "Spring Boot", "java",
-     ["spel-injection", "actuator-leak", "deserialization"]),
-    (b"X-Atlassian", "Atlassian", "java", ["ognl-injection", "ssrf"]),
-    (b"jira", "Atlassian Jira", "java", ["ssrf", "ognl-injection"]),
-    (b"confluence", "Atlassian Confluence", "java", ["ognl-injection", "rce"]),
-    (b"phpMyAdmin", "phpMyAdmin", "php", ["sqli", "lfi", "auth-bypass"]),
-    (b"Grafana", "Grafana", "go", ["path-traversal", "ssrf"]),
-    (b"X-Jenkins", "Jenkins", "java", ["script-console-rce", "deserialization"]),
-    (b"GitLab", "GitLab", "ruby", ["ssrf", "path-traversal"]),
-    (b"csrf-param", "Ruby on Rails", "ruby", ["deserialization", "mass-assignment"]),
-]
+    path = Path(__file__).with_name("data") / "signatures.json"
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:  # missing/corrupt -> no detection
+        log("!", f"signatures.json unavailable ({exc}); fingerprinting disabled")
+        raw = {}
 
-# WAF/CDN signatures:
-# (name, kind, [ (header, substr) ], [cookie substr], [body substr bytes])
-_WAF_SIGS = [
-    ("Cloudflare", "cdn+waf",
-     [("server", "cloudflare"), ("cf-ray", "")], ["__cfduid", "cf_clearance"],
-     [b"Attention Required! | Cloudflare", b"cloudflare"]),
-    ("Akamai", "cdn+waf",
-     [("server", "akamaighost"), ("x-akamai-transformed", "")], ["akamai", "ak_bmsc"],
-     [b"Reference&#32;&#35;"]),
-    ("Imperva Incapsula", "waf",
-     [("x-iinfo", ""), ("x-cdn", "incapsula")], ["incap_ses", "visid_incap"],
-     [b"Incapsula incident ID", b"_Incapsula_Resource"]),
-    ("F5 BIG-IP ASM", "waf",
-     [("server", "big-ip")], ["ts01", "bigipserver", "f5_cspm"],
-     [b"The requested URL was rejected", b"Support ID"]),
-    ("AWS CloudFront", "cdn",
-     [("x-amz-cf-id", ""), ("via", "cloudfront")], [], []),
-    ("AWS WAF", "waf",
-     [("x-amzn-waf-action", ""), ("x-amzn-requestid", "")], ["aws-waf-token"],
-     [b"AWS WAF"]),
-    ("Sucuri", "waf",
-     [("server", "sucuri"), ("x-sucuri-id", "")], [], [b"Sucuri WebSite Firewall"]),
-    ("Fastly", "cdn",
-     [("x-served-by", "cache"), ("x-fastly-request-id", "")], [], []),
-    ("ModSecurity", "waf",
-     [("server", "mod_security"), ("x-mod-security", "")], [],
-     [b"Mod_Security", b"NOYB", b"This error was generated by Mod_Security"]),
-    ("Wordfence", "waf",
-     [], ["wfvt_", "wordfence_verifiedhuman"],
-     [b"Generated by Wordfence", b"Your access to this site has been limited"]),
-    ("Barracuda", "waf",
-     [], ["barra_counter_session"], [b"Barracuda"]),
-    ("FortiWeb", "waf",
-     [("x-fw-debug", "")], ["fortiwafsid"], [b"FortiWeb"]),
-    ("Citrix NetScaler", "lb+waf",
-     [("via", "ns"), ("cneonction", "")], ["ns_af", "citrix_ns_id"], [b"NetScaler"]),
-    ("Azure Front Door", "cdn+waf",
-     [("x-azure-ref", ""), ("x-fd-healthprobe", "")], [], []),
-    ("Reblaze", "waf",
-     [], ["rbzid", "rbzsessionid"], [b"Reblaze"]),
-    ("DenyAll", "waf",
-     [], ["sessioncookie"], [b"Condition Intercepted"]),
-    ("Edgecast", "cdn",
-     [("server", "ecs"), ("x-ec-", "")], [], []),
-]
+    cookies = {k: (v["tech"], v.get("lang"), v["vulns"])
+               for k, v in raw.get("cookies", {}).items()}
+    server = [(e["needle"], e["tech"], e["vulns"]) for e in raw.get("server", [])]
+    xpowered = [(e["needle"], e["tech"], e.get("lang"), e["vulns"])
+                for e in raw.get("xpowered", [])]
+    body = [(e["marker"].encode("latin-1"), e["tech"], e.get("lang"), e["vulns"])
+            for e in raw.get("body", [])]
+    waf = [(e["name"], e["kind"],
+            [tuple(x) for x in e.get("headers", [])],
+            list(e.get("cookies", [])),
+            [b.encode("latin-1") for b in e.get("body", [])])
+           for e in raw.get("waf", [])]
+    sec = [(e["header"], e["vuln"], e["note"])
+           for e in raw.get("security_headers", [])]
+    return {"cookies": cookies, "server": server, "xpowered": xpowered,
+            "body": body, "waf": waf, "security_headers": sec}
+
+
+_SIGS = load_signatures()
+_COOKIE_SIGS = _SIGS["cookies"]
+_SERVER_SIGS = _SIGS["server"]
+_XPOWERED_SIGS = _SIGS["xpowered"]
+_BODY_SIGS = _SIGS["body"]
+_WAF_SIGS = _SIGS["waf"]
 
 
 @dataclass
@@ -238,17 +140,8 @@ def _version_in(text: str) -> str | None:
 # Security-header analysis — low-hanging bug-bounty surface
 # --------------------------------------------------------------------------- #
 
-# header -> (present_default, missing vuln class, note)
-_SEC_HEADERS = [
-    ("strict-transport-security", "missing-hsts",
-     "no HSTS — susceptible to SSL-strip / downgrade"),
-    ("content-security-policy", "missing-csp",
-     "no CSP — weaker XSS mitigation"),
-    ("x-content-type-options", "mime-sniffing",
-     "no X-Content-Type-Options: nosniff"),
-    ("referrer-policy", "referrer-leak",
-     "no Referrer-Policy — potential token leak via Referer"),
-]
+# header -> (header name, missing vuln class, note); loaded from signatures.json
+_SEC_HEADERS = _SIGS["security_headers"]
 
 
 def analyze_security_headers(fp: Fingerprint, h: dict[str, str]) -> None:

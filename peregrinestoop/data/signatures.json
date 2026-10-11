@@ -1,0 +1,976 @@
+{
+  "_comment": "Fingerprint signature tables. Edit/extend without touching code. Body markers are latin-1 strings, re-encoded to bytes on load.",
+  "cookies": {
+    "phpsessid": {
+      "tech": "PHP",
+      "lang": "php",
+      "vulns": [
+        "lfi",
+        "rce-upload",
+        "sqli",
+        "file-inclusion"
+      ]
+    },
+    "jsessionid": {
+      "tech": "Java servlet (JSP/Tomcat)",
+      "lang": "java",
+      "vulns": [
+        "deserialization",
+        "ssrf",
+        "path-traversal",
+        "xxe"
+      ]
+    },
+    "laravel_session": {
+      "tech": "Laravel",
+      "lang": "php",
+      "vulns": [
+        "mass-assignment",
+        "debug-leak",
+        "idor",
+        "sqli"
+      ]
+    },
+    "xsrf-token": {
+      "tech": "Laravel/Angular (XSRF)",
+      "lang": null,
+      "vulns": [
+        "csrf-token-leak"
+      ]
+    },
+    "asp.net_sessionid": {
+      "tech": "ASP.NET",
+      "lang": "dotnet",
+      "vulns": [
+        "viewstate-deser",
+        "padding-oracle"
+      ]
+    },
+    "aspxauth": {
+      "tech": "ASP.NET Forms Auth",
+      "lang": "dotnet",
+      "vulns": [
+        "viewstate-deser",
+        "auth-bypass"
+      ]
+    },
+    "ci_session": {
+      "tech": "CodeIgniter",
+      "lang": "php",
+      "vulns": [
+        "sqli",
+        "idor"
+      ]
+    },
+    "django_session": {
+      "tech": "Django",
+      "lang": "python",
+      "vulns": [
+        "ssti",
+        "debug-leak",
+        "idor"
+      ]
+    },
+    "sessionid": {
+      "tech": "Django",
+      "lang": "python",
+      "vulns": [
+        "ssti",
+        "debug-leak"
+      ]
+    },
+    "csrftoken": {
+      "tech": "Django (CSRF)",
+      "lang": "python",
+      "vulns": [
+        "csrf"
+      ]
+    },
+    "connect.sid": {
+      "tech": "Express / Node.js",
+      "lang": "nodejs",
+      "vulns": [
+        "proto-pollution",
+        "ssrf",
+        "nosqli"
+      ]
+    },
+    "_session_id": {
+      "tech": "Ruby on Rails",
+      "lang": "ruby",
+      "vulns": [
+        "deserialization",
+        "secret-key-leak",
+        "mass-assignment"
+      ]
+    },
+    "rack.session": {
+      "tech": "Rack / Ruby",
+      "lang": "ruby",
+      "vulns": [
+        "deserialization"
+      ]
+    },
+    "cfid": {
+      "tech": "Adobe ColdFusion",
+      "lang": "cfml",
+      "vulns": [
+        "lfi",
+        "deserialization",
+        "rce"
+      ]
+    },
+    "cftoken": {
+      "tech": "Adobe ColdFusion",
+      "lang": "cfml",
+      "vulns": [
+        "lfi",
+        "deserialization",
+        "rce"
+      ]
+    },
+    "symfony": {
+      "tech": "Symfony",
+      "lang": "php",
+      "vulns": [
+        "ssti-twig",
+        "debug-leak",
+        "deserialization"
+      ]
+    },
+    "yii": {
+      "tech": "Yii Framework",
+      "lang": "php",
+      "vulns": [
+        "sqli",
+        "rce"
+      ]
+    },
+    "wordpress_logged_in": {
+      "tech": "WordPress",
+      "lang": "php",
+      "vulns": [
+        "plugin-cve",
+        "xmlrpc",
+        "rest-idor"
+      ]
+    },
+    "wp-settings": {
+      "tech": "WordPress",
+      "lang": "php",
+      "vulns": [
+        "plugin-cve",
+        "xmlrpc",
+        "rest-idor"
+      ]
+    },
+    "spring-session": {
+      "tech": "Spring",
+      "lang": "java",
+      "vulns": [
+        "spel-injection",
+        "deserialization",
+        "actuator-leak"
+      ]
+    },
+    "session-id": {
+      "tech": "Generic session",
+      "lang": null,
+      "vulns": [
+        "idor",
+        "session-fixation"
+      ]
+    },
+    "incap_ses": {
+      "tech": "Imperva (cookie)",
+      "lang": null,
+      "vulns": []
+    }
+  },
+  "server": [
+    {
+      "needle": "nginx",
+      "tech": "nginx",
+      "vulns": [
+        "misrouting",
+        "alias-traversal",
+        "ssrf"
+      ]
+    },
+    {
+      "needle": "apache-coyote",
+      "tech": "Apache Tomcat",
+      "vulns": [
+        "deserialization",
+        "path-traversal",
+        "ghostcat"
+      ]
+    },
+    {
+      "needle": "apache",
+      "tech": "Apache httpd",
+      "vulns": [
+        "cgi-rce",
+        "path-traversal"
+      ]
+    },
+    {
+      "needle": "microsoft-iis",
+      "tech": "Microsoft IIS",
+      "vulns": [
+        "short-name-enum",
+        "webdav",
+        "asp-rce"
+      ]
+    },
+    {
+      "needle": "litespeed",
+      "tech": "LiteSpeed",
+      "vulns": [
+        "path-traversal"
+      ]
+    },
+    {
+      "needle": "gunicorn",
+      "tech": "Gunicorn (Python)",
+      "vulns": [
+        "ssti",
+        "debug-leak"
+      ]
+    },
+    {
+      "needle": "uvicorn",
+      "tech": "Uvicorn (ASGI)",
+      "vulns": [
+        "ssti",
+        "debug-leak"
+      ]
+    },
+    {
+      "needle": "daphne",
+      "tech": "Daphne (Django ASGI)",
+      "vulns": [
+        "ssti",
+        "debug-leak"
+      ]
+    },
+    {
+      "needle": "werkzeug",
+      "tech": "Werkzeug (Flask)",
+      "vulns": [
+        "debug-console-rce",
+        "ssti"
+      ]
+    },
+    {
+      "needle": "express",
+      "tech": "Express (Node.js)",
+      "vulns": [
+        "proto-pollution",
+        "nosqli"
+      ]
+    },
+    {
+      "needle": "kestrel",
+      "tech": "ASP.NET Core (Kestrel)",
+      "vulns": [
+        "deserialization"
+      ]
+    },
+    {
+      "needle": "openresty",
+      "tech": "OpenResty",
+      "vulns": [
+        "ssrf",
+        "lua-misconfig"
+      ]
+    },
+    {
+      "needle": "tengine",
+      "tech": "Tengine (nginx fork)",
+      "vulns": [
+        "ssrf",
+        "alias-traversal"
+      ]
+    },
+    {
+      "needle": "caddy",
+      "tech": "Caddy",
+      "vulns": [
+        "misrouting"
+      ]
+    },
+    {
+      "needle": "lighttpd",
+      "tech": "lighttpd",
+      "vulns": [
+        "path-traversal"
+      ]
+    },
+    {
+      "needle": "jetty",
+      "tech": "Eclipse Jetty",
+      "vulns": [
+        "deserialization",
+        "path-traversal"
+      ]
+    },
+    {
+      "needle": "tomcat",
+      "tech": "Apache Tomcat",
+      "vulns": [
+        "deserialization",
+        "ghostcat",
+        "path-traversal"
+      ]
+    },
+    {
+      "needle": "jboss",
+      "tech": "JBoss / WildFly",
+      "vulns": [
+        "deserialization",
+        "jmx-rce"
+      ]
+    },
+    {
+      "needle": "weblogic",
+      "tech": "Oracle WebLogic",
+      "vulns": [
+        "deserialization",
+        "t3-rce",
+        "ssrf"
+      ]
+    },
+    {
+      "needle": "websphere",
+      "tech": "IBM WebSphere",
+      "vulns": [
+        "deserialization"
+      ]
+    },
+    {
+      "needle": "glassfish",
+      "tech": "GlassFish",
+      "vulns": [
+        "deserialization"
+      ]
+    },
+    {
+      "needle": "passenger",
+      "tech": "Phusion Passenger (Ruby)",
+      "vulns": [
+        "deserialization"
+      ]
+    },
+    {
+      "needle": "cowboy",
+      "tech": "Cowboy (Erlang)",
+      "vulns": [
+        "ssrf"
+      ]
+    },
+    {
+      "needle": "gws",
+      "tech": "Google Web Server",
+      "vulns": []
+    }
+  ],
+  "xpowered": [
+    {
+      "needle": "php",
+      "tech": "PHP",
+      "lang": "php",
+      "vulns": [
+        "lfi",
+        "rce-upload",
+        "sqli"
+      ]
+    },
+    {
+      "needle": "asp.net",
+      "tech": "ASP.NET",
+      "lang": "dotnet",
+      "vulns": [
+        "viewstate-deser",
+        "padding-oracle"
+      ]
+    },
+    {
+      "needle": "express",
+      "tech": "Express (Node.js)",
+      "lang": "nodejs",
+      "vulns": [
+        "proto-pollution",
+        "nosqli"
+      ]
+    },
+    {
+      "needle": "servlet",
+      "tech": "Java servlet",
+      "lang": "java",
+      "vulns": [
+        "deserialization"
+      ]
+    },
+    {
+      "needle": "next.js",
+      "tech": "Next.js",
+      "lang": "nodejs",
+      "vulns": [
+        "ssrf",
+        "middleware-bypass"
+      ]
+    },
+    {
+      "needle": "nuxt",
+      "tech": "Nuxt.js",
+      "lang": "nodejs",
+      "vulns": [
+        "ssrf"
+      ]
+    },
+    {
+      "needle": "phusion passenger",
+      "tech": "Phusion Passenger",
+      "lang": "ruby",
+      "vulns": [
+        "deserialization"
+      ]
+    },
+    {
+      "needle": "jsf",
+      "tech": "JavaServer Faces",
+      "lang": "java",
+      "vulns": [
+        "viewstate-deser",
+        "path-traversal"
+      ]
+    },
+    {
+      "needle": "django",
+      "tech": "Django",
+      "lang": "python",
+      "vulns": [
+        "ssti",
+        "debug-leak"
+      ]
+    },
+    {
+      "needle": "flask",
+      "tech": "Flask",
+      "lang": "python",
+      "vulns": [
+        "ssti",
+        "debug-console-rce"
+      ]
+    }
+  ],
+  "body": [
+    {
+      "marker": "__NEXT_DATA__",
+      "tech": "Next.js",
+      "lang": "nodejs",
+      "vulns": [
+        "ssrf",
+        "middleware-bypass"
+      ]
+    },
+    {
+      "marker": "wp-content",
+      "tech": "WordPress",
+      "lang": "php",
+      "vulns": [
+        "plugin-cve",
+        "xmlrpc",
+        "rest-idor"
+      ]
+    },
+    {
+      "marker": "wp-includes",
+      "tech": "WordPress",
+      "lang": "php",
+      "vulns": [
+        "plugin-cve",
+        "xmlrpc",
+        "rest-idor"
+      ]
+    },
+    {
+      "marker": "/sites/default/files",
+      "tech": "Drupal",
+      "lang": "php",
+      "vulns": [
+        "drupalgeddon",
+        "rest-rce"
+      ]
+    },
+    {
+      "marker": "Drupal.settings",
+      "tech": "Drupal",
+      "lang": "php",
+      "vulns": [
+        "drupalgeddon",
+        "rest-rce"
+      ]
+    },
+    {
+      "marker": "/media/jui/",
+      "tech": "Joomla",
+      "lang": "php",
+      "vulns": [
+        "sqli",
+        "lfi"
+      ]
+    },
+    {
+      "marker": "com_content",
+      "tech": "Joomla",
+      "lang": "php",
+      "vulns": [
+        "sqli",
+        "lfi"
+      ]
+    },
+    {
+      "marker": "/skin/frontend/",
+      "tech": "Magento",
+      "lang": "php",
+      "vulns": [
+        "deserialization",
+        "sqli"
+      ]
+    },
+    {
+      "marker": "Mage.Cookies",
+      "tech": "Magento",
+      "lang": "php",
+      "vulns": [
+        "deserialization",
+        "sqli"
+      ]
+    },
+    {
+      "marker": "ng-version",
+      "tech": "Angular",
+      "lang": "nodejs",
+      "vulns": [
+        "dom-xss",
+        "csti"
+      ]
+    },
+    {
+      "marker": "data-reactroot",
+      "tech": "React",
+      "lang": "nodejs",
+      "vulns": [
+        "dom-xss"
+      ]
+    },
+    {
+      "marker": "__vue__",
+      "tech": "Vue.js",
+      "lang": "nodejs",
+      "vulns": [
+        "dom-xss",
+        "csti"
+      ]
+    },
+    {
+      "marker": "Whitelabel Error Page",
+      "tech": "Spring Boot",
+      "lang": "java",
+      "vulns": [
+        "spel-injection",
+        "actuator-leak",
+        "deserialization"
+      ]
+    },
+    {
+      "marker": "X-Atlassian",
+      "tech": "Atlassian",
+      "lang": "java",
+      "vulns": [
+        "ognl-injection",
+        "ssrf"
+      ]
+    },
+    {
+      "marker": "jira",
+      "tech": "Atlassian Jira",
+      "lang": "java",
+      "vulns": [
+        "ssrf",
+        "ognl-injection"
+      ]
+    },
+    {
+      "marker": "confluence",
+      "tech": "Atlassian Confluence",
+      "lang": "java",
+      "vulns": [
+        "ognl-injection",
+        "rce"
+      ]
+    },
+    {
+      "marker": "phpMyAdmin",
+      "tech": "phpMyAdmin",
+      "lang": "php",
+      "vulns": [
+        "sqli",
+        "lfi",
+        "auth-bypass"
+      ]
+    },
+    {
+      "marker": "Grafana",
+      "tech": "Grafana",
+      "lang": "go",
+      "vulns": [
+        "path-traversal",
+        "ssrf"
+      ]
+    },
+    {
+      "marker": "X-Jenkins",
+      "tech": "Jenkins",
+      "lang": "java",
+      "vulns": [
+        "script-console-rce",
+        "deserialization"
+      ]
+    },
+    {
+      "marker": "GitLab",
+      "tech": "GitLab",
+      "lang": "ruby",
+      "vulns": [
+        "ssrf",
+        "path-traversal"
+      ]
+    },
+    {
+      "marker": "csrf-param",
+      "tech": "Ruby on Rails",
+      "lang": "ruby",
+      "vulns": [
+        "deserialization",
+        "mass-assignment"
+      ]
+    }
+  ],
+  "waf": [
+    {
+      "name": "Cloudflare",
+      "kind": "cdn+waf",
+      "headers": [
+        [
+          "server",
+          "cloudflare"
+        ],
+        [
+          "cf-ray",
+          ""
+        ]
+      ],
+      "cookies": [
+        "__cfduid",
+        "cf_clearance"
+      ],
+      "body": [
+        "Attention Required! | Cloudflare",
+        "cloudflare"
+      ]
+    },
+    {
+      "name": "Akamai",
+      "kind": "cdn+waf",
+      "headers": [
+        [
+          "server",
+          "akamaighost"
+        ],
+        [
+          "x-akamai-transformed",
+          ""
+        ]
+      ],
+      "cookies": [
+        "akamai",
+        "ak_bmsc"
+      ],
+      "body": [
+        "Reference&#32;&#35;"
+      ]
+    },
+    {
+      "name": "Imperva Incapsula",
+      "kind": "waf",
+      "headers": [
+        [
+          "x-iinfo",
+          ""
+        ],
+        [
+          "x-cdn",
+          "incapsula"
+        ]
+      ],
+      "cookies": [
+        "incap_ses",
+        "visid_incap"
+      ],
+      "body": [
+        "Incapsula incident ID",
+        "_Incapsula_Resource"
+      ]
+    },
+    {
+      "name": "F5 BIG-IP ASM",
+      "kind": "waf",
+      "headers": [
+        [
+          "server",
+          "big-ip"
+        ]
+      ],
+      "cookies": [
+        "ts01",
+        "bigipserver",
+        "f5_cspm"
+      ],
+      "body": [
+        "The requested URL was rejected",
+        "Support ID"
+      ]
+    },
+    {
+      "name": "AWS CloudFront",
+      "kind": "cdn",
+      "headers": [
+        [
+          "x-amz-cf-id",
+          ""
+        ],
+        [
+          "via",
+          "cloudfront"
+        ]
+      ],
+      "cookies": [],
+      "body": []
+    },
+    {
+      "name": "AWS WAF",
+      "kind": "waf",
+      "headers": [
+        [
+          "x-amzn-waf-action",
+          ""
+        ],
+        [
+          "x-amzn-requestid",
+          ""
+        ]
+      ],
+      "cookies": [
+        "aws-waf-token"
+      ],
+      "body": [
+        "AWS WAF"
+      ]
+    },
+    {
+      "name": "Sucuri",
+      "kind": "waf",
+      "headers": [
+        [
+          "server",
+          "sucuri"
+        ],
+        [
+          "x-sucuri-id",
+          ""
+        ]
+      ],
+      "cookies": [],
+      "body": [
+        "Sucuri WebSite Firewall"
+      ]
+    },
+    {
+      "name": "Fastly",
+      "kind": "cdn",
+      "headers": [
+        [
+          "x-served-by",
+          "cache"
+        ],
+        [
+          "x-fastly-request-id",
+          ""
+        ]
+      ],
+      "cookies": [],
+      "body": []
+    },
+    {
+      "name": "ModSecurity",
+      "kind": "waf",
+      "headers": [
+        [
+          "server",
+          "mod_security"
+        ],
+        [
+          "x-mod-security",
+          ""
+        ]
+      ],
+      "cookies": [],
+      "body": [
+        "Mod_Security",
+        "NOYB",
+        "This error was generated by Mod_Security"
+      ]
+    },
+    {
+      "name": "Wordfence",
+      "kind": "waf",
+      "headers": [],
+      "cookies": [
+        "wfvt_",
+        "wordfence_verifiedhuman"
+      ],
+      "body": [
+        "Generated by Wordfence",
+        "Your access to this site has been limited"
+      ]
+    },
+    {
+      "name": "Barracuda",
+      "kind": "waf",
+      "headers": [],
+      "cookies": [
+        "barra_counter_session"
+      ],
+      "body": [
+        "Barracuda"
+      ]
+    },
+    {
+      "name": "FortiWeb",
+      "kind": "waf",
+      "headers": [
+        [
+          "x-fw-debug",
+          ""
+        ]
+      ],
+      "cookies": [
+        "fortiwafsid"
+      ],
+      "body": [
+        "FortiWeb"
+      ]
+    },
+    {
+      "name": "Citrix NetScaler",
+      "kind": "lb+waf",
+      "headers": [
+        [
+          "via",
+          "ns"
+        ],
+        [
+          "cneonction",
+          ""
+        ]
+      ],
+      "cookies": [
+        "ns_af",
+        "citrix_ns_id"
+      ],
+      "body": [
+        "NetScaler"
+      ]
+    },
+    {
+      "name": "Azure Front Door",
+      "kind": "cdn+waf",
+      "headers": [
+        [
+          "x-azure-ref",
+          ""
+        ],
+        [
+          "x-fd-healthprobe",
+          ""
+        ]
+      ],
+      "cookies": [],
+      "body": []
+    },
+    {
+      "name": "Reblaze",
+      "kind": "waf",
+      "headers": [],
+      "cookies": [
+        "rbzid",
+        "rbzsessionid"
+      ],
+      "body": [
+        "Reblaze"
+      ]
+    },
+    {
+      "name": "DenyAll",
+      "kind": "waf",
+      "headers": [],
+      "cookies": [
+        "sessioncookie"
+      ],
+      "body": [
+        "Condition Intercepted"
+      ]
+    },
+    {
+      "name": "Edgecast",
+      "kind": "cdn",
+      "headers": [
+        [
+          "server",
+          "ecs"
+        ],
+        [
+          "x-ec-",
+          ""
+        ]
+      ],
+      "cookies": [],
+      "body": []
+    }
+  ],
+  "security_headers": [
+    {
+      "header": "strict-transport-security",
+      "vuln": "missing-hsts",
+      "note": "no HSTS — susceptible to SSL-strip / downgrade"
+    },
+    {
+      "header": "content-security-policy",
+      "vuln": "missing-csp",
+      "note": "no CSP — weaker XSS mitigation"
+    },
+    {
+      "header": "x-content-type-options",
+      "vuln": "mime-sniffing",
+      "note": "no X-Content-Type-Options: nosniff"
+    },
+    {
+      "header": "referrer-policy",
+      "vuln": "referrer-leak",
+      "note": "no Referrer-Policy — potential token leak via Referer"
+    }
+  ]
+}

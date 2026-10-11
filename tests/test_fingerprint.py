@@ -165,3 +165,13 @@ def test_cve_map_loads_from_data_file():
     assert "Apache httpd" in m
     assert all(not k.startswith("_") for k in m)      # comment key filtered
     assert any(c["cve"] == "CVE-2021-41773" for c in m["Apache httpd"])
+
+
+def test_signatures_load_from_data_file():
+    from peregrinestoop.fingerprint import load_signatures
+    s = load_signatures()
+    assert s["cookies"]["phpsessid"][1] == "php"          # (tech, lang, vulns)
+    assert any(n == "nginx" for n, _, _ in s["server"])
+    assert isinstance(s["body"][0][0], bytes)             # markers re-encoded
+    assert any(w[0] == "Cloudflare" for w in s["waf"])
+    assert s["waf"][0][2][0] == ("server", "cloudflare")  # header tuple intact
