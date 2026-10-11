@@ -179,3 +179,31 @@ def test_run_includes_probes_and_no_active_skips(monkeypatch, tmp_path):
         "--audit-log", str(tmp_path / "a2.jsonl"), "--json", str(out2),
     ])
     assert json.loads(out2.read_text())["probes"] == []
+
+
+def test_run_with_crawl_expands_surface(monkeypatch, tmp_path):
+    def handler(method, url, kw):
+        from urllib.parse import urlsplit
+        path = urlsplit(url).path or "/"
+        if method == "OPTIONS":
+            return make_response(200, {"Allow": "GET"}, b"")
+        if path == "/robots.txt":
+            return make_response(404, {}, b"")
+        if path == "/":
+            return make_response(200, {"Server": "nginx"},
+                                 b'<a href="/admin/panel">a</a>')
+        return make_response(200, {}, b"ok")
+    _patch_http(monkeypatch, handler)
+
+    out = tmp_path / "run.json"
+    rc = cli.main([
+        "run", "https://a.target.com/", "--scope", "*.target.com",
+        "--crawl", "--crawl-pages", "10", "--budget", "60",
+        "--state-db", str(tmp_path / "s.sqlite"),
+        "--audit-log", str(tmp_path / "a.jsonl"), "--json", str(out),
+    ])
+    assert rc == 0
+    data = json.loads(out.read_text())
+    assert data["crawl"]["pages"] >= 1
+    # the crawled /admin/panel endpoint was folded into the probe surface
+    assert any(s["path"] == "/admin/panel" for s in data["surface"])

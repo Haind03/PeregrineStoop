@@ -9,11 +9,12 @@ Author: HaiND from the Post and Telecommunication Institute of Technology
 """
 from __future__ import annotations
 
+import html
 import time
 
 from . import BRAND
 
-__all__ = ["render_report"]
+__all__ = ["render_report", "render_html_report"]
 
 _SEV_ORDER = {"high": 0, "medium": 1, "low": 2, "info": 3}
 
@@ -171,3 +172,122 @@ def render_report(host: str, fingerprint: dict | None, findings: list[dict]) -> 
         "Responsible, authorized disclosure only._")
     add("")
     return "\n".join(lines)
+
+
+# --------------------------------------------------------------------------- #
+# HTML rendering — a self-contained, themeable page (no external assets)
+# --------------------------------------------------------------------------- #
+
+_SEV_COLOR = {"high": "#d9534f", "medium": "#e0922f",
+              "low": "#4a90d9", "info": "#888"}
+
+_HTML_CSS = """
+:root { --bg:#fff; --fg:#1a1a1a; --muted:#666; --card:#f6f7f9;
+        --border:#e2e4e8; --code:#f0f1f3; }
+@media (prefers-color-scheme: dark) {
+  :root { --bg:#15171a; --fg:#e8e8e8; --muted:#9aa0a6; --card:#1e2126;
+          --border:#2a2e35; --code:#23262c; } }
+* { box-sizing: border-box; }
+body { margin:0; padding:24px 16px; background:var(--bg); color:var(--fg);
+       font:15px/1.55 -apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif; }
+.wrap { max-width: 880px; margin: 0 auto; }
+h1 { font-size: 1.5rem; margin: 0 0 4px; }
+h2 { font-size: 1.15rem; margin: 28px 0 10px; border-bottom:1px solid var(--border);
+     padding-bottom:6px; }
+.brand { color: var(--muted); font-style: italic; margin: 0 0 16px; }
+.meta { color: var(--muted); font-size: .9rem; }
+.note { background: var(--card); border:1px solid var(--border); border-left:4px solid #e0922f;
+        padding:10px 14px; border-radius:6px; margin:14px 0; }
+table { border-collapse: collapse; width:100%; margin:10px 0; font-size:.92rem; }
+th,td { text-align:left; padding:7px 10px; border-bottom:1px solid var(--border);
+        vertical-align:top; }
+th { color: var(--muted); font-weight:600; }
+code { background: var(--code); padding:1px 5px; border-radius:4px; font-size:.86em; }
+.pill { display:inline-block; padding:1px 9px; border-radius:11px; color:#fff;
+        font-size:.78rem; font-weight:600; }
+ul { margin:8px 0; padding-left:20px; }
+footer { margin-top:28px; color:var(--muted); font-size:.85rem;
+         border-top:1px solid var(--border); padding-top:12px; }
+"""
+
+
+def _esc(x) -> str:
+    return html.escape(str(x if x is not None else ""))
+
+
+def _pill(sev: str) -> str:
+    c = _SEV_COLOR.get((sev or "info").lower(), "#888")
+    return f'<span class="pill" style="background:{c}">{_esc(sev)}</span>'
+
+
+def render_html_report(host: str, fingerprint: dict | None,
+                       findings: list[dict]) -> str:
+    """Render the same report as a self-contained HTML page (no external assets)."""
+    now = time.strftime("%Y-%m-%d %H:%M:%SZ", time.gmtime())
+    fp = fingerprint or {}
+    rows = []
+
+    rows.append(f"<h1>PeregrineStoop recon report</h1>")
+    rows.append(f'<p class="brand">{_esc(BRAND)}</p>')
+    rows.append(f'<p class="meta">Target <code>{_esc(host)}</code> · generated '
+                f'{_esc(now)} · {len(findings)} finding(s)</p>')
+    rows.append('<div class="note">Authorized testing only. A recon triage '
+                'summary — every active-probe item and CVE entry is a '
+                '<b>candidate to verify</b>, not a confirmed vulnerability.</div>')
+
+    rows.append("<h2>Technology fingerprint</h2><ul>")
+    rows.append(f"<li><b>Server:</b> {_esc(fp.get('server') or 'unknown')}</li>")
+    rows.append(f"<li><b>Language:</b> {_esc(fp.get('language') or 'unknown')}</li>")
+    rows.append(f"<li><b>CDN:</b> {_esc(fp.get('cdn') or 'none detected')}</li>")
+    rows.append(f"<li><b>WAF:</b> {_esc(fp.get('waf') or 'none detected')}</li>")
+    if fp.get("allowed_methods"):
+        rows.append(f"<li><b>Methods:</b> {_esc(', '.join(fp['allowed_methods']))}</li>")
+    if fp.get("vuln_classes"):
+        rows.append(f"<li><b>Vuln classes:</b> {_esc(', '.join(fp['vuln_classes']))}</li>")
+    rows.append("</ul>")
+
+    cves = fp.get("cve_candidates") or []
+    if cves:
+        rows.append("<h2>CVE candidates (verify only)</h2>")
+        rows.append("<table><tr><th>CVE / lead</th><th>For</th>"
+                    "<th>Confidence</th><th>Verify</th></tr>")
+        for c in cves:
+            rows.append(f"<tr><td><code>{_esc(c.get('cve'))}</code></td>"
+                        f"<td>{_esc(c.get('for'))}</td>"
+                        f"<td>{_esc(c.get('confidence'))}</td>"
+                        f"<td>{_esc(c.get('verify'))}</td></tr>")
+        rows.append("</table>")
+
+    rows.append("<h2>Findings</h2>")
+    if findings:
+        rows.append("<table><tr><th>Severity</th><th>Kind</th><th>Detail</th></tr>")
+        for f in sorted(findings, key=_sev_key):
+            rows.append(f"<tr><td>{_pill(f.get('severity','info'))}</td>"
+                        f"<td>{_esc(f.get('kind'))}</td>"
+                        f"<td>{_esc(f.get('detail'))}</td></tr>")
+        rows.append("</table>")
+    else:
+        rows.append("<p>No findings recorded.</p>")
+
+    cvss = [k for k in dict.fromkeys(f.get("kind", "") for f in findings)
+            if cvss_hint(k)]
+    if cvss:
+        rows.append("<h2>Suggested CVSS 3.1 starting vectors (verify before use)</h2>")
+        rows.append("<table><tr><th>Kind</th><th>Starting vector</th>"
+                    "<th>Rationale</th></tr>")
+        for k in cvss:
+            vec, why = cvss_hint(k)
+            rows.append(f"<tr><td>{_esc(k)}</td><td><code>{_esc(vec)}</code></td>"
+                        f"<td>{_esc(why)}</td></tr>")
+        rows.append("</table>")
+
+    rows.append('<footer>Generated by PeregrineStoop — scope-gated, audited '
+                'recon. Candidates require manual verification; responsible, '
+                'authorized disclosure only.</footer>')
+
+    body = "\n".join(rows)
+    return (f"<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">"
+            f"<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">"
+            f"<title>PeregrineStoop — {_esc(host)}</title>"
+            f"<style>{_HTML_CSS}</style></head><body><div class=\"wrap\">"
+            f"{body}</div></body></html>\n")
