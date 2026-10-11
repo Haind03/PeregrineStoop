@@ -68,6 +68,7 @@ simply disabled) rather than crashing.
 | `common.py` | `ScopeChecker`, `StoopHTTP` (scope gate + audit + rate limit + timeout + UA + body cap), colored stderr logging. |
 | `state.py` | SQLite state & dedup across sessions; URL normalization; 5-minute budget timer; findings store. |
 | `fingerprint.py` | Tech/WAF fingerprint from headers/cookies/body/meta + **security-header analysis** → vuln classes + CVE *candidates* (version guesses flagged low-confidence). Signatures & CVE map load from `data/*.json`. |
+| `crawl.py` | **Bounded, polite link discovery** (same-host, depth/page/budget-limited, scope-gated, dedup, GET-only); seeds from `robots.txt`/`sitemap.xml`. Outputs a snapshot that chains into `diff`. |
 | `diff.py` | Snapshot a surface (content hash + endpoints + params), diff vs baseline, rank by freshness + sensitivity. |
 | `probes.py` | **Safe active probes (GET/OPTIONS only, non-destructive)**: context-aware reflected-input, open-redirect, CORS reflection, method enumeration. Each reports a *candidate*, never a confirmation. |
 | `report.py` | Render stored fingerprint + findings into a structured **Markdown recon report** for triage/disclosure. |
@@ -95,6 +96,15 @@ cat scope.txt
 
 ```bash
 stoop fingerprint https://app.target.com --scope "*.target.com" --json fp.json
+```
+
+### Crawl (bounded link discovery)
+
+```bash
+# discover same-host endpoints, seed from robots.txt/sitemap, write a snapshot
+stoop crawl https://app.target.com --scope "*.target.com" \
+  --depth 1 --max-pages 25 --snapshot base.json
+# then diff a later crawl against it (see below)
 ```
 
 ### Diff watcher
@@ -195,9 +205,9 @@ the HTTP gate refusing out-of-scope and unsafe methods *before sending*,
 fingerprint inference across every stack/WAF/security-header case above, deep
 fingerprint (404 WAF merge + OPTIONS methods), the **safe active probes**
 (context-aware reflection/open-redirect/CORS/methods), the data-driven CVE map,
-Markdown report rendering (incl. CVSS templates), snapshot diffing, and **full
-CLI pipelines** (`fingerprint`/`diff`/`run`/`probe`/`report`/`resume`)
-end-to-end. A separate **`responses`-backed integration suite** drives the real
+Markdown report rendering (incl. CVSS templates), the bounded crawler
+(BFS/dedup/robots seeding/limits), snapshot diffing, and **full CLI pipelines**
+(`fingerprint`/`diff`/`run`/`probe`/`crawl`/`report`/`resume`) end-to-end. A separate **`responses`-backed integration suite** drives the real
 requests/urllib3 stack — genuine gzip/deflate (and brotli when available)
 decoding, body-cap on decoded and on identity bodies, redirect-read-not-followed,
 HEAD handling, OPTIONS method enumeration, and the scope gate firing before the

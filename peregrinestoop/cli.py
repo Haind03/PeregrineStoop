@@ -32,6 +32,7 @@ from .diff import (
     sensitivity,
 )
 from .fingerprint import fingerprint_host, fingerprint_host_deep
+from .crawl import crawl_site
 from .probes import run_safe_probes
 from .report import render_report
 from .state import BudgetTimer, StateStore
@@ -303,6 +304,38 @@ def cmd_probe(args) -> int:
     return 0
 
 
+def cmd_crawl(args) -> int:
+    scope = _build_scope(args)
+    sid = new_session_id()
+    http = _build_http(args, scope, sid)
+    store = StateStore(args.state_db)
+    timer = BudgetTimer(budget_seconds=args.budget)
+
+    host = urlsplit(args.url).hostname or args.url
+    store.touch_session(sid, host)
+    try:
+        res = crawl_site(
+            http, [args.url],
+            max_pages=args.max_pages, max_depth=args.depth,
+            timer=timer, state=store, seed_robots=not args.no_robots,
+        )
+    except ScopeViolation as exc:
+        log("-", str(exc))
+        store.close()
+        return 3
+
+    out_snap = args.snapshot or f"snapshot_{host}.json"
+    res.snapshot().save(out_snap)
+    log("+", f"snapshot saved -> {out_snap}")
+    store.touch_session(sid, host)
+    store.close()
+
+    payload = res.to_dict()
+    payload["snapshot_file"] = out_snap
+    _emit_json(args, payload)
+    return 0
+
+
 def cmd_report(args) -> int:
     store = StateStore(args.state_db)
     host = urlsplit(args.target).hostname or args.target
@@ -408,6 +441,17 @@ def build_parser() -> argparse.ArgumentParser:
     pr.add_argument("--no-methods", action="store_true")
     _add_common_flags(pr)
     pr.set_defaults(func=cmd_probe)
+
+    cr = sub.add_parser("crawl", help="bounded, scope-gated link discovery")
+    cr.add_argument("url", help="seed URL (must be in scope)")
+    cr.add_argument("--depth", type=int, default=1, help="max crawl depth (default 1)")
+    cr.add_argument("--max-pages", type=int, default=25,
+                    help="max pages to fetch (default 25)")
+    cr.add_argument("--no-robots", action="store_true",
+                    help="do not seed from robots.txt / sitemap.xml")
+    cr.add_argument("--snapshot", help="output snapshot path (chains into `diff`)")
+    _add_common_flags(cr)
+    cr.set_defaults(func=cmd_crawl)
 
     rp = sub.add_parser("report", help="render a Markdown recon report from state")
     rp.add_argument("target", help="target host or URL (uses stored data)")
