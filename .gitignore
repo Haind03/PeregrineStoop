@@ -1,0 +1,10 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+build/
+dist/
+*.sqlite
+.stoop_state.sqlite
+stoop_audit.jsonl
+snapshot_*.json
