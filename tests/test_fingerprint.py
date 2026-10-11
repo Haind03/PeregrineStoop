@@ -157,3 +157,11 @@ def test_cors_wildcard_misconfig():
 def test_version_disclosure_flagged():
     fp = fingerprint_response("t.com", 200, {"Server": "nginx/1.18.0"}, b"")
     assert "version-disclosure" in fp.vuln_classes
+
+
+def test_cve_map_loads_from_data_file():
+    from peregrinestoop.fingerprint import load_cve_map
+    m = load_cve_map()
+    assert "Apache httpd" in m
+    assert all(not k.startswith("_") for k in m)      # comment key filtered
+    assert any(c["cve"] == "CVE-2021-41773" for c in m["Apache httpd"])

@@ -44,8 +44,15 @@ pip install -e .          # editable; installs the `stoop` entrypoint
 # dependencies: Python 3.11+, requests (stdlib otherwise)
 ```
 
-`requests` is the only non-stdlib dependency (needed for a robust HTTP session
-with TLS verification, streaming, and header handling).
+`requests` is the only non-stdlib **runtime** dependency (robust HTTP session:
+TLS verification, streaming, header handling). The test suite additionally uses
+`responses` (dev-only; `pip install -e '.[test]'`) to drive integration tests
+through the real HTTP adapter without network — it is never imported by the
+package itself.
+
+CVE routing is data-driven: candidates live in
+[`peregrinestoop/data/cve_map.json`](peregrinestoop/data/cve_map.json) and can
+be extended without touching code. Every entry is a *candidate to verify*.
 
 ---
 
@@ -173,7 +180,7 @@ never an assertion.
 ## Tests
 
 ```bash
-pip install pytest
+pip install -e '.[test]'   # pytest + responses (dev-only)
 pytest -q
 ```
 
@@ -182,8 +189,10 @@ the HTTP gate refusing out-of-scope and unsafe methods *before sending*,
 **streaming body-size cap + audit on success/error**, URL dedup normalization,
 fingerprint inference across every stack/WAF/security-header case above, deep
 fingerprint (404 WAF merge + OPTIONS methods), the **safe active probes**
-(context-aware reflection/open-redirect/CORS/methods), Markdown report rendering,
-snapshot diffing, and **full CLI pipelines**
-(`fingerprint`/`diff`/`run`/`probe`/`report`/`resume`) driven end-to-end.
-**All HTTP is mocked via faithful `requests.Response` fakes — the suite makes no
-real network calls.**
+(context-aware reflection/open-redirect/CORS/methods), the data-driven CVE map,
+Markdown report rendering (incl. CVSS templates), snapshot diffing, and **full
+CLI pipelines** (`fingerprint`/`diff`/`run`/`probe`/`report`/`resume`)
+end-to-end. A separate **`responses`-backed integration suite** drives the real
+requests/urllib3 stack — genuine gzip decoding, body-cap on decoded bytes,
+redirect-read-not-followed, scope gate before the adapter. **No test makes a
+real network call**; fakes and `responses` intercept everything.

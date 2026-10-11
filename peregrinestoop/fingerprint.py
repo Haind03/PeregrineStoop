@@ -28,6 +28,7 @@ __all__ = [
     "analyze_security_headers",
     "detect_waf",
     "parse_allow",
+    "load_cve_map",
 ]
 
 _META_GENERATOR = re.compile(
@@ -410,57 +411,27 @@ def parse_allow(headers: Mapping[str, str]) -> list[str]:
     return sorted({m.strip().upper() for m in raw.split(",") if m.strip()})
 
 
-# Illustrative, non-exhaustive routing. Each entry is a CANDIDATE to verify —
+# CVE routing is data-driven: candidates live in data/cve_map.json so the list
+# can be extended without code changes. Each entry is a CANDIDATE to verify,
 # never an assertion. Version-gated entries stay low-confidence unless a version
 # was parsed from a header.
-_CVE_MAP = {
-    "Werkzeug (Flask)": [
-        {"cve": "werkzeug-debug-pin", "desc": "debug console PIN / RCE if debug=on",
-         "confidence": "low", "verify": "GET /console then check for interactive prompt"},
-    ],
-    "Flask": [
-        {"cve": "jinja2-ssti", "desc": "SSTI via Jinja2 if user input reaches render",
-         "confidence": "low", "verify": "inject {{7*7}} in reflected params"},
-    ],
-    "WordPress": [
-        {"cve": "plugin-specific", "desc": "enumerate plugins/themes for known CVEs",
-         "confidence": "low", "verify": "GET /wp-json/wp/v2/plugins and /readme.html"},
-    ],
-    "Apache httpd": [
-        {"cve": "CVE-2021-41773", "desc": "path traversal/RCE in Apache 2.4.49",
-         "confidence": "low", "verify": "requires 2.4.49; confirm via Server header"},
-    ],
-    "Apache Tomcat": [
-        {"cve": "CVE-2020-1938", "desc": "Ghostcat AJP file read/inclusion",
-         "confidence": "low", "verify": "AJP :8009 exposure; confirm version"},
-    ],
-    "Spring Boot": [
-        {"cve": "CVE-2022-22965", "desc": "Spring4Shell RCE (JDK9+ / specific config)",
-         "confidence": "low", "verify": "check binding params; preconditions apply"},
-        {"cve": "actuator-exposure", "desc": "unauthenticated /actuator endpoints",
-         "confidence": "low", "verify": "GET /actuator/env, /actuator/heapdump"},
-    ],
-    "Atlassian Confluence": [
-        {"cve": "CVE-2022-26134", "desc": "OGNL injection pre-auth RCE",
-         "confidence": "low", "verify": "version-dependent; confirm build"},
-    ],
-    "Drupal": [
-        {"cve": "CVE-2018-7600", "desc": "Drupalgeddon2 pre-auth RCE",
-         "confidence": "low", "verify": "version 7/8 pre-patch; confirm via CHANGELOG"},
-    ],
-    "Jenkins": [
-        {"cve": "script-console", "desc": "/script Groovy console if unauthenticated",
-         "confidence": "low", "verify": "GET /script and /manage"},
-    ],
-    "Oracle WebLogic": [
-        {"cve": "CVE-2020-14882", "desc": "console path-traversal auth bypass -> RCE",
-         "confidence": "low", "verify": "version-dependent; confirm patch level"},
-    ],
-    "phpMyAdmin": [
-        {"cve": "pma-lfi", "desc": "known LFI/SQLi across versions",
-         "confidence": "low", "verify": "GET Documentation.html for version"},
-    ],
-}
+
+
+def load_cve_map() -> dict[str, list[dict]]:
+    """Load the CVE-candidate map from the bundled JSON data file."""
+    import json
+    from pathlib import Path
+
+    path = Path(__file__).with_name("data") / "cve_map.json"
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:  # missing/corrupt -> degrade gracefully
+        log("!", f"cve_map.json unavailable ({exc}); CVE routing disabled")
+        return {}
+    return {k: v for k, v in raw.items() if not k.startswith("_")}
+
+
+_CVE_MAP = load_cve_map()
 
 
 def _route_cves(fp: Fingerprint) -> None:
