@@ -55,7 +55,7 @@ with TLS verification, streaming, and header handling).
 |------|------|
 | `common.py` | `ScopeChecker`, `StoopHTTP` (scope gate + audit + rate limit + timeout + UA + body cap), colored stderr logging. |
 | `state.py` | SQLite state & dedup across sessions; URL normalization; 5-minute budget timer; findings store. |
-| `fingerprint.py` | Tech/WAF fingerprint from headers/cookies/body → vuln classes + CVE *candidates* (version guesses flagged low-confidence). |
+| `fingerprint.py` | Tech/WAF fingerprint from headers/cookies/body/meta + **security-header analysis** → vuln classes + CVE *candidates* (version guesses flagged low-confidence). |
 | `diff.py` | Snapshot a surface (content hash + endpoints + params), diff vs baseline, rank by freshness + sensitivity. |
 | `cli.py` | `stoop` orchestrator: scope gate → fingerprint → rank → dedup filter → safe probes → priority table. |
 
@@ -112,6 +112,30 @@ the priority table** (colored `[+] [-] [!] [*]`).
 
 ---
 
+## Detection coverage
+
+**Stacks:** PHP, Java (Tomcat/Jetty/JBoss/WebLogic/WebSphere/GlassFish), ASP.NET
+(+Core/Kestrel), Node (Express/Next/Nuxt), Python (Django/Flask/Gunicorn/Uvicorn/
+Daphne), Ruby (Rails/Rack/Passenger), ColdFusion, Symfony/Yii/CodeIgniter/Laravel,
+Spring Boot, Drupal/Joomla/Magento/WordPress, Angular/React/Vue, Jenkins/GitLab/
+Atlassian/Grafana/phpMyAdmin.
+
+**WAF/CDN:** Cloudflare, Akamai, Imperva Incapsula, F5 BIG-IP ASM, AWS CloudFront/
+WAF, Sucuri, Fastly, ModSecurity, Wordfence, Barracuda, FortiWeb, Citrix NetScaler,
+Azure Front Door, Reblaze, DenyAll, Edgecast.
+
+**Vuln classes routed:** injection (sqli/nosqli/ssti/spel/ognl/csti), file issues
+(lfi/path-traversal/upload), deserialization, SSRF, XXE, proto-pollution,
+IDOR/mass-assignment, viewstate/padding-oracle, debug/actuator leaks, and
+security-header gaps (missing HSTS/CSP, clickjacking, CORS-misconfig,
+mime-sniffing, version-disclosure).
+
+**CVE candidates** (verify-only, version-gated): CVE-2021-41773 (Apache),
+CVE-2020-1938 (Ghostcat), CVE-2022-22965 (Spring4Shell), CVE-2022-26134
+(Confluence), CVE-2018-7600 (Drupalgeddon2), CVE-2020-14882 (WebLogic), Jenkins
+script console, Werkzeug debug PIN, and others. Each is a *candidate to verify*,
+never an assertion.
+
 ## Tests
 
 ```bash
@@ -120,7 +144,9 @@ pytest -q
 ```
 
 Covers: scope matching (`*.target.com` vs `evil-target.com`, exclude, IP/CIDR),
-the HTTP gate refusing out-of-scope and unsafe methods *before sending*, URL
-dedup normalization, fingerprint inference from synthetic responses, snapshot
-diffing, and CLI wiring. **All HTTP is mocked — the test suite makes no real
-network calls.**
+the HTTP gate refusing out-of-scope and unsafe methods *before sending*,
+**streaming body-size cap + audit on success/error**, URL dedup normalization,
+fingerprint inference across every stack/WAF/security-header case above, snapshot
+diffing, and **full CLI pipelines** (`fingerprint`/`diff`/`run`/`resume`) driven
+end-to-end. **All HTTP is mocked via faithful `requests.Response` fakes — the
+suite makes no real network calls.**

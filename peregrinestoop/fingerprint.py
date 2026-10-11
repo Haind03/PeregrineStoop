@@ -1,9 +1,14 @@
 """Tech / WAF fingerprinting + vuln-class & CVE routing.
 
-Inspects response headers, cookies, body and generator meta tags to infer the
-server, framework/language, CDN and WAF, then suggests which vulnerability
-classes to prioritize. Version guesses are always flagged ``low-confidence``
-unless a header states the version verbatim.
+Inspects response headers, cookies, body, generator meta tags and security
+headers to infer the server, framework/language, CDN and WAF, then suggests
+which vulnerability classes to prioritize. Version guesses are always flagged
+``low-confidence`` unless a header states the version verbatim.
+
+The signature tables aim for broad coverage of the stacks and WAFs commonly
+seen on bug-bounty scopes. They are inference aids, not proof: a CVE listed
+here is a *candidate to verify*, never an assertion that the target is
+vulnerable.
 
 Author: HaiND from the Post and Telecommunication Institute of Technology
 """
@@ -15,67 +20,163 @@ from typing import Mapping
 
 from .common import StoopHTTP, log
 
-__all__ = ["Fingerprint", "fingerprint_response", "fingerprint_host"]
+__all__ = [
+    "Fingerprint",
+    "fingerprint_response",
+    "fingerprint_host",
+    "analyze_security_headers",
+]
 
 _META_GENERATOR = re.compile(
     rb'<meta[^>]+name=["\']generator["\'][^>]+content=["\']([^"\']+)["\']',
     re.IGNORECASE,
 )
 
-# Cookie-name -> (tech, language, vuln classes)
+# --------------------------------------------------------------------------- #
+# Signature tables
+# --------------------------------------------------------------------------- #
+
+# Cookie-name substring -> (tech, language, vuln classes)
 _COOKIE_SIGS = {
-    "phpsessid": ("PHP", "php", ["lfi", "rce-upload", "sqli"]),
-    "jsessionid": ("Java servlet (JSP/Tomcat)", "java", ["deserialization", "ssrf", "path-traversal"]),
-    "laravel_session": ("Laravel", "php", ["mass-assignment", "debug-leak", "idor"]),
+    "phpsessid": ("PHP", "php", ["lfi", "rce-upload", "sqli", "file-inclusion"]),
+    "jsessionid": ("Java servlet (JSP/Tomcat)", "java",
+                   ["deserialization", "ssrf", "path-traversal", "xxe"]),
+    "laravel_session": ("Laravel", "php", ["mass-assignment", "debug-leak", "idor", "sqli"]),
+    "xsrf-token": ("Laravel/Angular (XSRF)", None, ["csrf-token-leak"]),
     "asp.net_sessionid": ("ASP.NET", "dotnet", ["viewstate-deser", "padding-oracle"]),
+    "aspxauth": ("ASP.NET Forms Auth", "dotnet", ["viewstate-deser", "auth-bypass"]),
     "ci_session": ("CodeIgniter", "php", ["sqli", "idor"]),
     "django_session": ("Django", "python", ["ssti", "debug-leak", "idor"]),
     "sessionid": ("Django", "python", ["ssti", "debug-leak"]),
-    "connect.sid": ("Express / Node.js", "nodejs", ["proto-pollution", "ssrf", "nosqli"]),
+    "csrftoken": ("Django (CSRF)", "python", ["csrf"]),
+    "connect.sid": ("Express / Node.js", "nodejs",
+                    ["proto-pollution", "ssrf", "nosqli"]),
+    "_session_id": ("Ruby on Rails", "ruby",
+                    ["deserialization", "secret-key-leak", "mass-assignment"]),
+    "rack.session": ("Rack / Ruby", "ruby", ["deserialization"]),
+    "cfid": ("Adobe ColdFusion", "cfml", ["lfi", "deserialization", "rce"]),
+    "cftoken": ("Adobe ColdFusion", "cfml", ["lfi", "deserialization", "rce"]),
+    "symfony": ("Symfony", "php", ["ssti-twig", "debug-leak", "deserialization"]),
+    "yii": ("Yii Framework", "php", ["sqli", "rce"]),
     "wordpress_logged_in": ("WordPress", "php", ["plugin-cve", "xmlrpc", "rest-idor"]),
+    "wp-settings": ("WordPress", "php", ["plugin-cve", "xmlrpc", "rest-idor"]),
+    "spring-session": ("Spring", "java", ["spel-injection", "deserialization", "actuator-leak"]),
+    "session-id": ("Generic session", None, ["idor", "session-fixation"]),
+    "incap_ses": ("Imperva (cookie)", None, []),
 }
 
-# header substring -> (tech, vuln classes)
+# Server header substring -> (tech, vuln classes)
 _SERVER_SIGS = [
-    ("nginx", "nginx", ["misrouting", "alias-traversal"]),
+    ("nginx", "nginx", ["misrouting", "alias-traversal", "ssrf"]),
+    ("apache-coyote", "Apache Tomcat", ["deserialization", "path-traversal", "ghostcat"]),
     ("apache", "Apache httpd", ["cgi-rce", "path-traversal"]),
-    ("microsoft-iis", "Microsoft IIS", ["short-name-enum", "webdav"]),
+    ("microsoft-iis", "Microsoft IIS", ["short-name-enum", "webdav", "asp-rce"]),
     ("litespeed", "LiteSpeed", ["path-traversal"]),
     ("gunicorn", "Gunicorn (Python)", ["ssti", "debug-leak"]),
+    ("uvicorn", "Uvicorn (ASGI)", ["ssti", "debug-leak"]),
+    ("daphne", "Daphne (Django ASGI)", ["ssti", "debug-leak"]),
     ("werkzeug", "Werkzeug (Flask)", ["debug-console-rce", "ssti"]),
     ("express", "Express (Node.js)", ["proto-pollution", "nosqli"]),
     ("kestrel", "ASP.NET Core (Kestrel)", ["deserialization"]),
     ("openresty", "OpenResty", ["ssrf", "lua-misconfig"]),
+    ("tengine", "Tengine (nginx fork)", ["ssrf", "alias-traversal"]),
+    ("caddy", "Caddy", ["misrouting"]),
+    ("lighttpd", "lighttpd", ["path-traversal"]),
+    ("jetty", "Eclipse Jetty", ["deserialization", "path-traversal"]),
+    ("tomcat", "Apache Tomcat", ["deserialization", "ghostcat", "path-traversal"]),
+    ("jboss", "JBoss / WildFly", ["deserialization", "jmx-rce"]),
+    ("weblogic", "Oracle WebLogic", ["deserialization", "t3-rce", "ssrf"]),
+    ("websphere", "IBM WebSphere", ["deserialization"]),
+    ("glassfish", "GlassFish", ["deserialization"]),
+    ("passenger", "Phusion Passenger (Ruby)", ["deserialization"]),
+    ("cowboy", "Cowboy (Erlang)", ["ssrf"]),
+    ("gws", "Google Web Server", []),
 ]
 
+# X-Powered-By substring -> (tech, language, vuln classes)
 _XPOWERED_SIGS = [
     ("php", "PHP", "php", ["lfi", "rce-upload", "sqli"]),
     ("asp.net", "ASP.NET", "dotnet", ["viewstate-deser", "padding-oracle"]),
     ("express", "Express (Node.js)", "nodejs", ["proto-pollution", "nosqli"]),
     ("servlet", "Java servlet", "java", ["deserialization"]),
     ("next.js", "Next.js", "nodejs", ["ssrf", "middleware-bypass"]),
+    ("nuxt", "Nuxt.js", "nodejs", ["ssrf"]),
+    ("phusion passenger", "Phusion Passenger", "ruby", ["deserialization"]),
+    ("jsf", "JavaServer Faces", "java", ["viewstate-deser", "path-traversal"]),
+    ("django", "Django", "python", ["ssti", "debug-leak"]),
+    ("flask", "Flask", "python", ["ssti", "debug-console-rce"]),
 ]
 
-# WAF/CDN signatures: (name, kind, [header checks], [cookie checks], [body checks])
+# Body-marker -> (tech, language or None, vuln classes)
+_BODY_SIGS = [
+    (b"__NEXT_DATA__", "Next.js", "nodejs", ["ssrf", "middleware-bypass"]),
+    (b"wp-content", "WordPress", "php", ["plugin-cve", "xmlrpc", "rest-idor"]),
+    (b"wp-includes", "WordPress", "php", ["plugin-cve", "xmlrpc", "rest-idor"]),
+    (b"/sites/default/files", "Drupal", "php", ["drupalgeddon", "rest-rce"]),
+    (b"Drupal.settings", "Drupal", "php", ["drupalgeddon", "rest-rce"]),
+    (b"/media/jui/", "Joomla", "php", ["sqli", "lfi"]),
+    (b"com_content", "Joomla", "php", ["sqli", "lfi"]),
+    (b"/skin/frontend/", "Magento", "php", ["deserialization", "sqli"]),
+    (b"Mage.Cookies", "Magento", "php", ["deserialization", "sqli"]),
+    (b"ng-version", "Angular", "nodejs", ["dom-xss", "csti"]),
+    (b"data-reactroot", "React", "nodejs", ["dom-xss"]),
+    (b"__vue__", "Vue.js", "nodejs", ["dom-xss", "csti"]),
+    (b"Whitelabel Error Page", "Spring Boot", "java",
+     ["spel-injection", "actuator-leak", "deserialization"]),
+    (b"X-Atlassian", "Atlassian", "java", ["ognl-injection", "ssrf"]),
+    (b"jira", "Atlassian Jira", "java", ["ssrf", "ognl-injection"]),
+    (b"confluence", "Atlassian Confluence", "java", ["ognl-injection", "rce"]),
+    (b"phpMyAdmin", "phpMyAdmin", "php", ["sqli", "lfi", "auth-bypass"]),
+    (b"Grafana", "Grafana", "go", ["path-traversal", "ssrf"]),
+    (b"X-Jenkins", "Jenkins", "java", ["script-console-rce", "deserialization"]),
+    (b"GitLab", "GitLab", "ruby", ["ssrf", "path-traversal"]),
+    (b"csrf-param", "Ruby on Rails", "ruby", ["deserialization", "mass-assignment"]),
+]
+
+# WAF/CDN signatures:
+# (name, kind, [ (header, substr) ], [cookie substr], [body substr bytes])
 _WAF_SIGS = [
     ("Cloudflare", "cdn+waf",
      [("server", "cloudflare"), ("cf-ray", "")], ["__cfduid", "cf_clearance"],
-     [b"Attention Required! | Cloudflare"]),
+     [b"Attention Required! | Cloudflare", b"cloudflare"]),
     ("Akamai", "cdn+waf",
-     [("server", "akamaighost"), ("x-akamai", "")], ["akamai"],
+     [("server", "akamaighost"), ("x-akamai-transformed", "")], ["akamai", "ak_bmsc"],
      [b"Reference&#32;&#35;"]),
     ("Imperva Incapsula", "waf",
      [("x-iinfo", ""), ("x-cdn", "incapsula")], ["incap_ses", "visid_incap"],
-     [b"Incapsula incident ID"]),
+     [b"Incapsula incident ID", b"_Incapsula_Resource"]),
     ("F5 BIG-IP ASM", "waf",
-     [("server", "big-ip")], ["ts", "bigipserver"],
-     [b"The requested URL was rejected"]),
+     [("server", "big-ip")], ["ts01", "bigipserver", "f5_cspm"],
+     [b"The requested URL was rejected", b"Support ID"]),
     ("AWS CloudFront", "cdn",
      [("x-amz-cf-id", ""), ("via", "cloudfront")], [], []),
+    ("AWS WAF", "waf",
+     [("x-amzn-waf-action", ""), ("x-amzn-requestid", "")], ["aws-waf-token"],
+     [b"AWS WAF"]),
     ("Sucuri", "waf",
      [("server", "sucuri"), ("x-sucuri-id", "")], [], [b"Sucuri WebSite Firewall"]),
     ("Fastly", "cdn",
-     [("x-served-by", "cache"), ("x-fastly", "")], [], []),
+     [("x-served-by", "cache"), ("x-fastly-request-id", "")], [], []),
+    ("ModSecurity", "waf",
+     [("server", "mod_security"), ("x-mod-security", "")], [],
+     [b"Mod_Security", b"NOYB", b"This error was generated by Mod_Security"]),
+    ("Wordfence", "waf",
+     [], ["wfvt_", "wordfence_verifiedhuman"],
+     [b"Generated by Wordfence", b"Your access to this site has been limited"]),
+    ("Barracuda", "waf",
+     [], ["barra_counter_session"], [b"Barracuda"]),
+    ("FortiWeb", "waf",
+     [("x-fw-debug", "")], ["fortiwafsid"], [b"FortiWeb"]),
+    ("Citrix NetScaler", "lb+waf",
+     [("via", "ns"), ("cneonction", "")], ["ns_af", "citrix_ns_id"], [b"NetScaler"]),
+    ("Azure Front Door", "cdn+waf",
+     [("x-azure-ref", ""), ("x-fd-healthprobe", "")], [], []),
+    ("Reblaze", "waf",
+     [], ["rbzid", "rbzsessionid"], [b"Reblaze"]),
+    ("DenyAll", "waf",
+     [], ["sessioncookie"], [b"Condition Intercepted"]),
+    ("Edgecast", "cdn",
+     [("server", "ecs"), ("x-ec-", "")], [], []),
 ]
 
 
@@ -89,6 +190,7 @@ class Fingerprint:
     waf: str | None = None
     vuln_classes: list[str] = field(default_factory=list)
     cve_candidates: list[dict] = field(default_factory=list)
+    security_headers: dict = field(default_factory=dict)
     notes: list[str] = field(default_factory=list)
 
     def add_tech(self, name: str, confidence: str, evidence: str) -> None:
@@ -112,6 +214,7 @@ class Fingerprint:
             "tech": self.tech,
             "vuln_classes": self.vuln_classes,
             "cve_candidates": self.cve_candidates,
+            "security_headers": self.security_headers,
             "notes": self.notes,
         }
 
@@ -123,6 +226,61 @@ def _lower_headers(headers: Mapping[str, str]) -> dict[str, str]:
 def _version_in(text: str) -> str | None:
     m = re.search(r"(\d+\.\d+(?:\.\d+)?)", text)
     return m.group(1) if m else None
+
+
+# --------------------------------------------------------------------------- #
+# Security-header analysis — low-hanging bug-bounty surface
+# --------------------------------------------------------------------------- #
+
+# header -> (present_default, missing vuln class, note)
+_SEC_HEADERS = [
+    ("strict-transport-security", "missing-hsts",
+     "no HSTS — susceptible to SSL-strip / downgrade"),
+    ("content-security-policy", "missing-csp",
+     "no CSP — weaker XSS mitigation"),
+    ("x-content-type-options", "mime-sniffing",
+     "no X-Content-Type-Options: nosniff"),
+    ("referrer-policy", "referrer-leak",
+     "no Referrer-Policy — potential token leak via Referer"),
+]
+
+
+def analyze_security_headers(fp: Fingerprint, h: dict[str, str]) -> None:
+    """Flag missing/misconfigured security headers as vuln classes + findings."""
+    present = {}
+    for name, vuln, note in _SEC_HEADERS:
+        if name in h:
+            present[name] = h[name]
+        else:
+            fp.add_vuln([vuln])
+            fp.notes.append(note)
+
+    # clickjacking: neither XFO nor frame-ancestors CSP
+    xfo = h.get("x-frame-options")
+    csp = h.get("content-security-policy", "")
+    if not xfo and "frame-ancestors" not in csp.lower():
+        fp.add_vuln(["clickjacking"])
+        fp.notes.append("no X-Frame-Options / frame-ancestors — clickjacking risk")
+    elif xfo:
+        present["x-frame-options"] = xfo
+
+    # permissive / credentialed CORS
+    aco = h.get("access-control-allow-origin")
+    acc = h.get("access-control-allow-credentials", "").lower()
+    if aco:
+        present["access-control-allow-origin"] = aco
+        if aco == "*" or acc == "true":
+            fp.add_vuln(["cors-misconfig"])
+            fp.notes.append(
+                f"CORS ACAO={aco!r} credentials={acc or 'n/a'} — "
+                "review for cross-origin data exposure"
+            )
+
+    # verbose server banner = info leak
+    if fp.server and _version_in(fp.server):
+        fp.add_vuln(["version-disclosure"])
+
+    fp.security_headers = present
 
 
 def fingerprint_response(
@@ -137,7 +295,6 @@ def fingerprint_response(
     h = _lower_headers(headers)
     body = body or b""
     cookies_raw = set_cookies if set_cookies is not None else []
-    # requests folds multiple Set-Cookie into one header; keep both paths
     if "set-cookie" in h and not cookies_raw:
         cookies_raw = [h["set-cookie"]]
     cookie_blob = " ".join(cookies_raw).lower()
@@ -150,11 +307,12 @@ def fingerprint_response(
             if needle in low:
                 ver = _version_in(h["server"])
                 conf = "high" if ver else "medium"
-                ev = f"Server: {h['server']}"
-                fp.add_tech(name + (f" {ver}" if ver else ""), conf, ev)
+                fp.add_tech(name + (f" {ver}" if ver else ""), conf,
+                            f"Server: {h['server']}")
                 fp.add_vuln(vulns)
                 if ver:
                     fp.notes.append(f"{name} version {ver} parsed from Server header")
+                break
 
     # X-Powered-By
     if h.get("x-powered-by"):
@@ -168,10 +326,18 @@ def fingerprint_response(
                             f"X-Powered-By: {h['x-powered-by']}")
                 fp.add_vuln(vulns)
 
+    # X-Generator / X-AspNet-Version etc.
+    if h.get("x-aspnet-version"):
+        fp.language = fp.language or "dotnet"
+        fp.add_tech(f"ASP.NET {h['x-aspnet-version']}", "high",
+                    "X-AspNet-Version header")
+        fp.add_vuln(["viewstate-deser"])
+
     # Cookies
     for cname, (tech, lang, vulns) in _COOKIE_SIGS.items():
         if cname in cookie_blob:
-            fp.language = fp.language or lang
+            if lang:
+                fp.language = fp.language or lang
             fp.add_tech(tech, "high", f"cookie {cname}")
             fp.add_vuln(vulns)
 
@@ -182,20 +348,20 @@ def fingerprint_response(
         ver = _version_in(gen)
         fp.add_tech(gen, "medium", "meta generator")
         if ver:
-            fp.notes.append(f"generator version {ver} (low-confidence — client-side meta)")
+            fp.notes.append(
+                f"generator version {ver} (low-confidence — client-side meta)")
 
-    # framework hints in body
-    if b"__NEXT_DATA__" in body:
-        fp.add_tech("Next.js", "medium", "__NEXT_DATA__ in body")
-        fp.language = fp.language or "nodejs"
-    if b"wp-content" in body or b"wp-includes" in body:
-        fp.add_tech("WordPress", "medium", "wp-content/wp-includes paths")
-        fp.add_vuln(["plugin-cve", "xmlrpc", "rest-idor"])
+    # body markers
+    for marker, name, lang, vulns in _BODY_SIGS:
+        if marker.lower() in body.lower():
+            if lang:
+                fp.language = fp.language or lang
+            fp.add_tech(name, "medium", f"body marker {marker.decode('latin-1')!r}")
+            fp.add_vuln(vulns)
 
     # WAF / CDN
     for name, kind, hdr_checks, cookie_checks, body_checks in _WAF_SIGS:
-        hit = False
-        evidence = ""
+        hit, evidence = False, ""
         for hk, hv in hdr_checks:
             if hk in h and (hv == "" or hv in h[hk].lower()):
                 hit, evidence = True, f"header {hk}"
@@ -212,30 +378,67 @@ def fingerprint_response(
                     break
         if hit:
             if "waf" in kind:
-                fp.waf = name
+                fp.waf = fp.waf or name
             if "cdn" in kind:
-                fp.cdn = name
+                fp.cdn = fp.cdn or name
+            if "lb" in kind and not fp.waf:
+                fp.waf = name
             fp.add_tech(name, "high", evidence)
 
+    analyze_security_headers(fp, h)
     _route_cves(fp)
     return fp
 
 
-# Illustrative, non-exhaustive routing. CVEs are *candidates to verify*, never
-# asserted as present. Version-gated entries stay low-confidence unless a
-# version was parsed from a header above.
+# Illustrative, non-exhaustive routing. Each entry is a CANDIDATE to verify —
+# never an assertion. Version-gated entries stay low-confidence unless a version
+# was parsed from a header.
 _CVE_MAP = {
     "Werkzeug (Flask)": [
-        {"cve": "CVE-2019-14806-class", "desc": "debug console PIN / RCE if debug=on",
+        {"cve": "werkzeug-debug-pin", "desc": "debug console PIN / RCE if debug=on",
          "confidence": "low", "verify": "GET /console then check for interactive prompt"},
+    ],
+    "Flask": [
+        {"cve": "jinja2-ssti", "desc": "SSTI via Jinja2 if user input reaches render",
+         "confidence": "low", "verify": "inject {{7*7}} in reflected params"},
     ],
     "WordPress": [
         {"cve": "plugin-specific", "desc": "enumerate plugins/themes for known CVEs",
          "confidence": "low", "verify": "GET /wp-json/wp/v2/plugins and /readme.html"},
     ],
     "Apache httpd": [
-        {"cve": "CVE-2021-41773", "desc": "path traversal/RCE in 2.4.49",
-         "confidence": "low", "verify": "requires version 2.4.49; confirm via Server header"},
+        {"cve": "CVE-2021-41773", "desc": "path traversal/RCE in Apache 2.4.49",
+         "confidence": "low", "verify": "requires 2.4.49; confirm via Server header"},
+    ],
+    "Apache Tomcat": [
+        {"cve": "CVE-2020-1938", "desc": "Ghostcat AJP file read/inclusion",
+         "confidence": "low", "verify": "AJP :8009 exposure; confirm version"},
+    ],
+    "Spring Boot": [
+        {"cve": "CVE-2022-22965", "desc": "Spring4Shell RCE (JDK9+ / specific config)",
+         "confidence": "low", "verify": "check binding params; preconditions apply"},
+        {"cve": "actuator-exposure", "desc": "unauthenticated /actuator endpoints",
+         "confidence": "low", "verify": "GET /actuator/env, /actuator/heapdump"},
+    ],
+    "Atlassian Confluence": [
+        {"cve": "CVE-2022-26134", "desc": "OGNL injection pre-auth RCE",
+         "confidence": "low", "verify": "version-dependent; confirm build"},
+    ],
+    "Drupal": [
+        {"cve": "CVE-2018-7600", "desc": "Drupalgeddon2 pre-auth RCE",
+         "confidence": "low", "verify": "version 7/8 pre-patch; confirm via CHANGELOG"},
+    ],
+    "Jenkins": [
+        {"cve": "script-console", "desc": "/script Groovy console if unauthenticated",
+         "confidence": "low", "verify": "GET /script and /manage"},
+    ],
+    "Oracle WebLogic": [
+        {"cve": "CVE-2020-14882", "desc": "console path-traversal auth bypass -> RCE",
+         "confidence": "low", "verify": "version-dependent; confirm patch level"},
+    ],
+    "phpMyAdmin": [
+        {"cve": "pma-lfi", "desc": "known LFI/SQLi across versions",
+         "confidence": "low", "verify": "GET Documentation.html for version"},
     ],
 }
 
@@ -246,18 +449,26 @@ def _route_cves(fp: Fingerprint) -> None:
         for key, cves in _CVE_MAP.items():
             if key == base or key == t["name"]:
                 for c in cves:
-                    fp.cve_candidates.append({**c, "for": t["name"]})
+                    if not any(
+                        x["cve"] == c["cve"] and x.get("for") == t["name"]
+                        for x in fp.cve_candidates
+                    ):
+                        fp.cve_candidates.append({**c, "for": t["name"]})
 
 
 def fingerprint_host(http: StoopHTTP, base_url: str) -> Fingerprint:
-    """Live fingerprint: fetch base_url (and a 404 page) through the gate."""
+    """Live fingerprint: fetch base_url through the scope gate, then infer."""
     from urllib.parse import urlsplit
 
     host = urlsplit(base_url).hostname or base_url
     resp = http.get(base_url)
-    set_cookies = resp.raw.headers.get_all("Set-Cookie") if hasattr(
-        resp.raw, "headers"
-    ) else None
+    set_cookies = None
+    raw = getattr(resp, "raw", None)
+    if raw is not None and hasattr(getattr(raw, "headers", None), "get_all"):
+        try:
+            set_cookies = raw.headers.get_all("Set-Cookie")
+        except Exception:  # noqa: BLE001
+            set_cookies = None
     fp = fingerprint_response(
         host, resp.status_code, dict(resp.headers), resp.content or b"", set_cookies
     )
