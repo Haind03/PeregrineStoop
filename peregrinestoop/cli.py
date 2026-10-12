@@ -32,7 +32,7 @@ from .diff import (
     sensitivity,
 )
 from .fingerprint import fingerprint_host, fingerprint_host_deep
-from .audit import format_text, load_audit, summarize_audit
+from .audit import filter_entries, format_text, load_audit, summarize_audit, to_csv
 from .bundle import write_bundle
 from .crawl import crawl_site
 from .config import (
@@ -437,6 +437,14 @@ def cmd_audit(args) -> int:
     entries = load_audit(args.audit_log)
     if not entries:
         log("!", f"no audit entries in {args.audit_log}")
+    entries = filter_entries(entries, host=args.host, session=args.session)
+    if args.host or args.session:
+        log("*", f"filtered to {len(entries)} entries "
+                 f"(host={args.host or '*'}, session={args.session or '*'})")
+    if args.csv:
+        with open(args.csv, "w", encoding="utf-8", newline="") as fh:
+            fh.write(to_csv(entries))
+        log("+", f"wrote CSV -> {args.csv} ({len(entries)} rows)")
     summary = summarize_audit(entries)
     print(format_text(summary), file=sys.stderr)
     if summary.blocked:
@@ -565,6 +573,10 @@ def build_parser() -> argparse.ArgumentParser:
     au = sub.add_parser("audit", help="summarize the JSONL audit log")
     au.add_argument("--audit-log", default="stoop_audit.jsonl",
                     help="audit log to summarize")
+    au.add_argument("--host", help="only entries for this host")
+    au.add_argument("--session", help="only entries for this session id")
+    au.add_argument("--csv", metavar="FILE",
+                    help="write the (filtered) entries as CSV to this file")
     au.add_argument("--json", metavar="FILE",
                     help="also write the summary JSON to this file")
     au.set_defaults(func=cmd_audit)

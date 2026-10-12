@@ -27,3 +27,16 @@ It reports:
 A non-zero `blocked` count is a good sign: it means the scope gate stopped
 out-of-scope requests before any packet left. Malformed log lines are skipped
 rather than treated as fatal.
+
+## Filters and CSV
+
+Narrow the summary and export the raw rows:
+
+```bash
+stoop audit --audit-log stoop_audit.jsonl --host app.target.com
+stoop audit --audit-log stoop_audit.jsonl --session <id> --csv rows.csv
+```
+
+`--host` and `--session` filter the entries before summarizing; `--csv` writes
+the filtered rows (iso, session_id, method, url, scope_check, status, note) for
+a spreadsheet or an engagement log.
