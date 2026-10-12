@@ -33,8 +33,16 @@ from .diff import (
 )
 from .fingerprint import fingerprint_host, fingerprint_host_deep
 from .crawl import crawl_site
+from .config import (
+    BUDGET_DEFAULT,
+    RATE_DEFAULT,
+    TIMEOUT_DEFAULT,
+    cfg_http,
+    cfg_scope,
+    load_config,
+)
 from .probes import run_safe_probes
-from .report import render_report
+from .report import render_html_report, render_report
 from .state import BudgetTimer, StateStore
 
 _BANNER = rf"""
@@ -63,11 +71,13 @@ def _add_common_flags(p: argparse.ArgumentParser) -> None:
                    help="in-scope pattern (repeatable), e.g. '*.target.com'")
     p.add_argument("--scope-file", metavar="FILE",
                    help="file of scope patterns ('!'=exclude, '#'=comment)")
-    p.add_argument("--rate", type=float, default=3.0,
+    p.add_argument("--config", metavar="FILE",
+                   help="TOML config with default scope/http settings")
+    p.add_argument("--rate", type=float, default=None,
                    help="max requests/second (default 3)")
-    p.add_argument("--timeout", type=float, default=15.0,
+    p.add_argument("--timeout", type=float, default=None,
                    help="per-request timeout seconds (default 15)")
-    p.add_argument("--budget", type=float, default=300.0,
+    p.add_argument("--budget", type=float, default=None,
                    help="per-target time budget seconds (default 300 = 5 min)")
     p.add_argument("--insecure", action="store_true",
                    help="disable TLS verification (lab use)")
@@ -81,14 +91,30 @@ def _add_common_flags(p: argparse.ArgumentParser) -> None:
                    help="also write machine-readable JSON to this file")
 
 
+def _cfg(args) -> dict:
+    return getattr(args, "_cfg", {}) or {}
+
+
+def _budget(args) -> float:
+    if args.budget is not None:
+        return args.budget
+    return float(cfg_http(_cfg(args), "budget", BUDGET_DEFAULT))
+
+
 def _build_scope(args) -> ScopeChecker:
     sc = ScopeChecker()
     if args.scope_file:
         sc = ScopeChecker.from_file(args.scope_file)
-    for pat in args.scope:
+    inc, exc = cfg_scope(_cfg(args))        # config-provided scope (additive)
+    for pat in inc:
+        sc.add(pat)
+    for pat in exc:
+        sc.add("!" + pat)
+    for pat in args.scope:                  # explicit CLI scope
         sc.add(pat)
     if not sc:
-        log("-", "empty scope — refusing to run. Provide --scope or --scope-file.")
+        log("-", "empty scope — refusing to run. Provide --scope, --scope-file, "
+                 "or a [scope] section in --config.")
         raise SystemExit(2)
     log("*", f"scope include={sc.include} exclude={sc.exclude}")
     return sc
@@ -96,11 +122,15 @@ def _build_scope(args) -> ScopeChecker:
 
 def _build_http(args, scope: ScopeChecker, session_id: str) -> StoopHTTP:
     audit = AuditLogger(args.audit_log, session_id)
+    cfg = _cfg(args)
+    rate = args.rate if args.rate is not None else cfg_http(cfg, "rate", RATE_DEFAULT)
+    timeout = (args.timeout if args.timeout is not None
+               else cfg_http(cfg, "timeout", TIMEOUT_DEFAULT))
     return StoopHTTP(
         scope,
         audit=audit,
-        rate=args.rate,
-        timeout=args.timeout,
+        rate=float(rate),
+        timeout=float(timeout),
         verify=not args.insecure,
         allow_unsafe=args.allow_unsafe,
     )
@@ -194,11 +224,12 @@ def cmd_run(args) -> int:
     sid = new_session_id()
     http = _build_http(args, scope, sid)
     store = StateStore(args.state_db)
-    timer = BudgetTimer(budget_seconds=args.budget)
+    budget = _budget(args)
+    timer = BudgetTimer(budget_seconds=budget)
 
     host = urlsplit(args.url).hostname or args.url
     store.touch_session(sid, host)
-    log("*", f"session {sid} target {host} budget {args.budget:.0f}s")
+    log("*", f"session {sid} target {host} budget {budget:.0f}s")
 
     # 1) deep fingerprint (home + 404 + OPTIONS)
     try:
@@ -212,10 +243,39 @@ def cmd_run(args) -> int:
     # 2) rank + probe safe surface (dedup-filtered, budget-aware)
     base = f"{urlsplit(args.url).scheme}://{host}"
     surface: list[dict] = []
-    for path in _PROBE_PATHS:
+    probe_paths = list(_PROBE_PATHS)   # local copy; never mutate the module list
+
+    # 2a) optional bounded crawl to expand the surface before probing
+    crawl_info: dict = {}
+    seen_paths: set[str] = set()
+    if getattr(args, "crawl", False) and not timer.expired:
+        try:
+            cres = crawl_site(
+                http, [args.url], max_pages=args.crawl_pages, max_depth=1,
+                timer=timer, state=store, seed_robots=True)
+            crawl_info = cres.to_dict()
+            # crawl already fetched these (dedup would skip re-probing), so add
+            # the reachable ones straight into the ranked surface.
+            for url, code in cres.status.items():
+                p = urlsplit(url).path or "/"
+                if p in seen_paths:
+                    continue
+                seen_paths.add(p)
+                score = sensitivity(p) + (3 if code and code < 400 else 0)
+                surface.append({"path": p, "status": code, "score": score,
+                                "src": "crawl"})
+                if code and code < 400:
+                    store.record_finding(host, "reachable-path",
+                                         f"{p} -> {code} (crawl)", "info")
+        except ScopeViolation as exc:
+            log("-", str(exc))
+
+    for path in probe_paths:
         if timer.expired:
-            log("!", f"time budget ({args.budget:.0f}s) exceeded — stopping probes")
+            log("!", f"time budget ({budget:.0f}s) exceeded — stopping probes")
             break
+        if path in seen_paths:        # already surfaced by the crawl
+            continue
         url = base + path
         if store.seen("GET", url):
             log("*", f"skip (already tested) {path}")
@@ -266,6 +326,7 @@ def cmd_run(args) -> int:
         "fingerprint": fp.to_dict(),
         "surface": surface,
         "probes": probes,
+        "crawl": crawl_info,
         "findings": store.findings(host),
     }
     store.touch_session(sid, host)
@@ -309,7 +370,7 @@ def cmd_crawl(args) -> int:
     sid = new_session_id()
     http = _build_http(args, scope, sid)
     store = StateStore(args.state_db)
-    timer = BudgetTimer(budget_seconds=args.budget)
+    timer = BudgetTimer(budget_seconds=_budget(args))
 
     host = urlsplit(args.url).hostname or args.url
     store.touch_session(sid, host)
@@ -344,13 +405,15 @@ def cmd_report(args) -> int:
     store.close()
     if fp is None and not findings:
         log("!", f"no stored data for {host} — run 'stoop run' first")
-    md = render_report(host, fp, findings)
+    as_html = args.html or (args.out or "").lower().endswith((".html", ".htm"))
+    content = (render_html_report(host, fp, findings) if as_html
+               else render_report(host, fp, findings))
     if args.out:
         with open(args.out, "w", encoding="utf-8") as fh:
-            fh.write(md)
-        log("+", f"wrote report -> {args.out}")
+            fh.write(content)
+        log("+", f"wrote {'HTML' if as_html else 'Markdown'} report -> {args.out}")
     else:
-        print(md)  # stdout
+        print(content)  # stdout
     return 0
 
 
@@ -430,6 +493,10 @@ def build_parser() -> argparse.ArgumentParser:
     rn.add_argument("url", help="target base URL (must be in scope)")
     rn.add_argument("--no-active", action="store_true",
                     help="skip safe active probes (fingerprint + path map only)")
+    rn.add_argument("--crawl", action="store_true",
+                    help="run a bounded crawl first to expand the probe surface")
+    rn.add_argument("--crawl-pages", type=int, default=15,
+                    help="max pages for the in-run crawl (default 15)")
     _add_common_flags(rn)
     rn.set_defaults(func=cmd_run)
 
@@ -456,7 +523,10 @@ def build_parser() -> argparse.ArgumentParser:
     rp = sub.add_parser("report", help="render a Markdown recon report from state")
     rp.add_argument("target", help="target host or URL (uses stored data)")
     rp.add_argument("--state-db", default=".stoop_state.sqlite")
-    rp.add_argument("--out", metavar="FILE", help="write Markdown here (else stdout)")
+    rp.add_argument("--out", metavar="FILE",
+                    help="write here (else stdout); .html extension implies --html")
+    rp.add_argument("--html", action="store_true",
+                    help="render a self-contained HTML page instead of Markdown")
     rp.set_defaults(func=cmd_report)
 
     rs = sub.add_parser("resume", help="show the last session's state")
@@ -473,6 +543,8 @@ def main(argv: list[str] | None = None) -> int:
         print(_BANNER, file=sys.stderr)
     parser = build_parser()
     args = parser.parse_args(argv)
+    # load optional config profile (flags still override it)
+    args._cfg = load_config(args.config) if getattr(args, "config", None) else {}
     try:
         return args.func(args)
     except KeyboardInterrupt:

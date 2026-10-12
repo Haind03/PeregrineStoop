@@ -93,3 +93,38 @@ def test_cli_report_roundtrip(monkeypatch, tmp_path):
     assert "a.target.com" in md
     assert "nginx" in md
     assert "## Findings" in md
+
+
+def test_render_html_report_structure_and_escaping():
+    from peregrinestoop.report import render_html_report
+    html = render_html_report("a.target.com", _fp(), [
+        {"severity": "high", "kind": "open-redirect", "detail": "param <next>"},
+    ])
+    assert html.startswith("<!doctype html>")
+    assert "a.target.com" in html
+    assert "CVE-2021-41773" in html
+    assert "&lt;next&gt;" in html                 # detail HTML-escaped
+    assert "prefers-color-scheme" in html          # dark-mode aware
+    assert "Suggested CVSS" in html                # cvss section present
+
+
+def test_cli_report_html_by_extension(monkeypatch, tmp_path):
+    def handler(method, url, kw):
+        if method == "OPTIONS":
+            return make_response(200, {"Allow": "GET"}, b"")
+        return make_response(200, {"Server": "nginx/1.18.0"}, b"<html></html>")
+
+    def fake_build(args, scope, sid):
+        return StoopHTTP(scope, rate=0, session=FakeSession(handler))
+    monkeypatch.setattr(cli, "_build_http", fake_build)
+
+    db = str(tmp_path / "s.sqlite")
+    cli.main(["run", "https://a.target.com/", "--scope", "*.target.com",
+              "--budget", "60", "--state-db", db,
+              "--audit-log", str(tmp_path / "a.jsonl"),
+              "--json", str(tmp_path / "r.json")])
+    out = tmp_path / "report.html"
+    rc = cli.main(["report", "https://a.target.com/", "--state-db", db,
+                   "--out", str(out)])   # .html extension -> HTML
+    assert rc == 0
+    assert out.read_text().startswith("<!doctype html>")

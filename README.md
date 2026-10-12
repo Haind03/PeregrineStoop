@@ -71,7 +71,8 @@ simply disabled) rather than crashing.
 | `crawl.py` | **Bounded, polite link discovery** (same-host, depth/page/budget-limited, scope-gated, dedup, GET-only); seeds from `robots.txt`/`sitemap.xml`. Outputs a snapshot that chains into `diff`. |
 | `diff.py` | Snapshot a surface (content hash + endpoints + params), diff vs baseline, rank by freshness + sensitivity. |
 | `probes.py` | **Safe active probes (GET/OPTIONS only, non-destructive)**: context-aware reflected-input, open-redirect, CORS reflection, method enumeration. Each reports a *candidate*, never a confirmation. |
-| `report.py` | Render stored fingerprint + findings into a structured **Markdown recon report** for triage/disclosure. |
+| `report.py` | Render stored fingerprint + findings into a structured **Markdown or self-contained HTML recon report** (incl. CVSS starting-vector templates). |
+| `config.py` | Optional **TOML config profiles** (`tomllib`, stdlib) for default scope/rate/budget/timeout; CLI flags override. |
 | `cli.py` | `stoop` orchestrator: scope gate → deep fingerprint → rank → dedup filter → safe probes → priority table → report. |
 
 Deep fingerprint (`stoop run`) fetches the home page **plus a 404 error page and
@@ -131,12 +132,32 @@ stoop probe https://app.target.com/login --scope "*.target.com" --json probe.jso
 # disable individual checks: --no-reflection --no-redirect --no-cors --no-methods
 ```
 
-### Markdown report
+### Report (Markdown or HTML)
 
 ```bash
 # aggregate stored fingerprint + findings for a host into a triage report
 stoop report https://app.target.com --out report.md
+stoop report https://app.target.com --out report.html   # .html => styled HTML
+stoop report https://app.target.com --html              # HTML to stdout
 ```
+
+### Config profile
+
+```bash
+# keep per-engagement defaults in TOML (CLI flags still override it)
+cat stoop.toml
+# [scope]
+# include = ["*.target.com"]
+# exclude = ["admin.target.com"]
+# [http]
+# rate = 2
+# budget = 600
+# timeout = 20
+stoop run https://app.target.com --config stoop.toml
+```
+
+`stoop run --crawl` runs a bounded crawl first and folds the reachable,
+crawl-discovered endpoints straight into the ranked surface.
 
 ### Resume last session
 

@@ -78,6 +78,7 @@ def parse_sitemap(xml: str, base_url: str) -> set[str]:
 class CrawlResult:
     target: str = ""
     pages: dict[str, bytes] = field(default_factory=dict)   # url -> body
+    status: dict[str, int] = field(default_factory=dict)    # url -> status code
     visited: list[str] = field(default_factory=list)
     discovered: set[str] = field(default_factory=set)       # all links seen
     seeded_from: list[str] = field(default_factory=list)    # robots/sitemap
@@ -97,15 +98,15 @@ class CrawlResult:
         }
 
 
-def _fetch(http: StoopHTTP, url: str) -> bytes | None:
+def _fetch(http: StoopHTTP, url: str) -> tuple[int | None, bytes | None]:
     try:
         resp = http.get(url)
-        return resp.content or b""
+        return resp.status_code, (resp.content or b"")
     except ScopeViolation:
         raise
     except Exception as exc:  # noqa: BLE001
         log("-", f"crawl skip {url}: {exc}")
-        return None
+        return None, None
 
 
 def crawl_site(
@@ -129,14 +130,14 @@ def crawl_site(
     # seed from robots.txt / sitemap.xml (bounded by the same limits)
     if seed_robots:
         base = f"{urlsplit(seeds[0]).scheme}://{host}"
-        robots = _fetch(http, base + "/robots.txt")
+        _, robots = _fetch(http, base + "/robots.txt")
         if robots:
             paths, sitemaps = parse_robots(robots.decode("latin-1", "replace"), base)
             for u in sorted(paths):
                 frontier.append((u, 0))
                 res.seeded_from.append(u)
             for sm in sorted(sitemaps):
-                body = _fetch(http, sm)
+                _, body = _fetch(http, sm)
                 if body:
                     for loc in sorted(parse_sitemap(body.decode("latin-1", "replace"), base)):
                         if _same_host(loc, host):
@@ -157,11 +158,13 @@ def crawl_site(
         seen_norm.add(norm)
         if state is not None and state.seen("GET", url):
             continue
-        body = _fetch(http, url)
+        code, body = _fetch(http, url)
         if state is not None:
             state.mark_tested("GET", url)
         if body is None:
             continue
+        if code is not None:
+            res.status[url] = code
         res.pages[url] = body
         res.visited.append(url)
         links = extract_links(url, body)
