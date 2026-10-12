@@ -30,6 +30,9 @@ __all__ = [
     "parse_allow",
     "load_cve_map",
     "load_signatures",
+    "favicon_hash",
+    "load_favicon_map",
+    "lookup_favicon",
 ]
 
 _META_GENERATOR = re.compile(
@@ -98,6 +101,7 @@ class Fingerprint:
     cve_candidates: list[dict] = field(default_factory=list)
     security_headers: dict = field(default_factory=dict)
     allowed_methods: list[str] = field(default_factory=list)
+    favicon: str | None = None
     notes: list[str] = field(default_factory=list)
 
     def add_tech(self, name: str, confidence: str, evidence: str) -> None:
@@ -123,6 +127,7 @@ class Fingerprint:
             "cve_candidates": self.cve_candidates,
             "security_headers": self.security_headers,
             "allowed_methods": self.allowed_methods,
+            "favicon": self.favicon,
             "notes": self.notes,
         }
 
@@ -327,6 +332,32 @@ def load_cve_map() -> dict[str, list[dict]]:
 _CVE_MAP = load_cve_map()
 
 
+def favicon_hash(data: bytes) -> str:
+    """Stable sha256 hex of favicon bytes (reported for external lookup too)."""
+    import hashlib
+
+    return hashlib.sha256(data).hexdigest()
+
+
+def load_favicon_map() -> dict:
+    """Load data/favicon_hashes.json (comment keys filtered)."""
+    import json
+    from pathlib import Path
+
+    path = Path(__file__).with_name("data") / "favicon_hashes.json"
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return {k: v for k, v in raw.items() if not k.startswith("_")}
+
+
+def lookup_favicon(h: str, _map: dict | None = None) -> dict | None:
+    """Return the mapped {tech, note} for a favicon hash, or None."""
+    m = _map if _map is not None else load_favicon_map()
+    return m.get(h)
+
+
 def _route_cves(fp: Fingerprint) -> None:
     for t in fp.tech:
         base = re.sub(r"\s+\d.*$", "", t["name"]).strip()
@@ -403,9 +434,23 @@ def fingerprint_host_deep(http: StoopHTTP, base_url: str) -> Fingerprint:
     except Exception as exc:  # noqa: BLE001
         fp.notes.append(f"OPTIONS probe failed: {exc}")
 
+    # 3) favicon hash -> tech mapping (and always report the hash)
+    try:
+        fav = http.get(urljoin(base_url, "/favicon.ico"))
+        if fav.status_code == 200 and fav.content:
+            fh = favicon_hash(fav.content)
+            fp.favicon = fh
+            fp.notes.append(f"favicon sha256 {fh} (look up in Shodan/FavFreak too)")
+            hit = lookup_favicon(fh)
+            if hit:
+                fp.add_tech(hit.get("tech", "favicon-match"), "medium",
+                            "favicon hash match")
+    except Exception as exc:  # noqa: BLE001
+        fp.notes.append(f"favicon probe failed: {exc}")
+
     host = urlsplit(base_url).hostname or base_url
     log("*", f"deep fingerprint {host}: methods={fp.allowed_methods} "
-             f"waf={fp.waf}")
+             f"waf={fp.waf} favicon={fp.favicon}")
     return fp
 
 
