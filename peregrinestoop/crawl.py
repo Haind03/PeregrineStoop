@@ -20,10 +20,17 @@ from .common import ScopeViolation, StoopHTTP, log
 from .diff import Snapshot, snapshot_from_items
 from .state import BudgetTimer, StateStore, normalize_url
 
-__all__ = ["crawl_site", "parse_robots", "parse_sitemap", "CrawlResult"]
+__all__ = ["crawl_site", "parse_robots", "parse_sitemap", "CrawlResult",
+           "extract_links", "extract_js_endpoints"]
 
 _LINK = re.compile(r"""(?:href|src|action)\s*=\s*["']([^"'#>]+)["']""", re.I)
 _SITEMAP_LOC = re.compile(r"<loc>\s*([^<\s]+)\s*</loc>", re.I)
+
+# JS/XHR call sites and path-like string literals (passive, from fetched bodies)
+_JS_CALL = re.compile(
+    r"""(?:fetch|axios(?:\.\w+)?|\.(?:get|post|put|delete|patch)|open)\s*\(\s*["'`]([^"'`]+)["'`]""",
+    re.I)
+_JS_PATHLIT = re.compile(r"""["'`](/(?:api|v\d+|graphql|rest|internal|admin)[A-Za-z0-9_\-/.]*)["'`]""", re.I)
 
 
 def _same_host(url: str, host: str) -> bool:
@@ -42,6 +49,26 @@ def extract_links(base_url: str, body: bytes) -> set[str]:
         absu = urljoin(base_url, raw)
         if absu.startswith(("http://", "https://")) and _same_host(absu, host):
             out.add(absu.split("#")[0])
+    return out
+
+
+def extract_js_endpoints(base_url: str, body: bytes) -> set[str]:
+    """Passively pull API-looking endpoints from JS/XHR calls and path literals.
+
+    Returns absolute, same-host URLs. This reads already-fetched bodies only —
+    it never executes anything.
+    """
+    text = body.decode("latin-1", "replace")
+    host = urlsplit(base_url).hostname or ""
+    out: set[str] = set()
+    for rx in (_JS_CALL, _JS_PATHLIT):
+        for m in rx.finditer(text):
+            raw = m.group(1).strip()
+            if not raw or raw.startswith(("data:", "mailto:", "javascript:")):
+                continue
+            absu = urljoin(base_url, raw)
+            if absu.startswith(("http://", "https://")) and _same_host(absu, host):
+                out.add(absu.split("#")[0])
     return out
 
 
@@ -129,7 +156,9 @@ def crawl_site(
 
     # seed from robots.txt / sitemap.xml (bounded by the same limits)
     if seed_robots:
-        base = f"{urlsplit(seeds[0]).scheme}://{host}"
+        # use netloc (not hostname) so a non-default port is preserved
+        parts0 = urlsplit(seeds[0])
+        base = f"{parts0.scheme}://{parts0.netloc}"
         _, robots = _fetch(http, base + "/robots.txt")
         if robots:
             paths, sitemaps = parse_robots(robots.decode("latin-1", "replace"), base)
@@ -169,6 +198,7 @@ def crawl_site(
         res.visited.append(url)
         links = extract_links(url, body)
         res.discovered |= links
+        res.discovered |= extract_js_endpoints(url, body)   # passive JS endpoints
         if depth < max_depth:
             for link in sorted(links):
                 if normalize_url(link) not in seen_norm:
