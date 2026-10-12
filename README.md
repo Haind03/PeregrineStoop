@@ -184,6 +184,9 @@ report, in Markdown or as a standalone HTML page (theme aware, no external
 assets). It includes suggested CVSS 3.1 starting vectors per finding kind, which
 are templates to reassess, never an auto scored result.
 
+`stoop report <target> --sarif out.sarif` also exports findings as SARIF
+2.1.0 for GitHub Code Scanning or other pipelines.
+
 `stoop run --session-dir out/` writes a per engagement bundle (`run.json`,
 `fingerprint.json`, `findings.json`, `report.md`, `report.html`, and a copy of
 the audit log) into one folder.
