@@ -74,6 +74,7 @@ simply disabled) rather than crashing.
 | `report.py` | Render stored fingerprint + findings into a structured **Markdown or self-contained HTML recon report** (incl. CVSS starting-vector templates). |
 | `config.py` | Optional **TOML config profiles** (`tomllib`, stdlib) for default scope/rate/budget/timeout; CLI flags override. |
 | `audit.py` | Summarize the JSONL audit log (`stoop audit`): sent vs blocked, per-host/method/status breakdown, sessions, time span. Offline. |
+| `bundle.py` | Write a per-engagement session bundle (`stoop run --session-dir`): JSON payload + fingerprint + findings + MD/HTML report + audit copy. |
 | `cli.py` | `stoop` orchestrator: scope gate → deep fingerprint → rank → dedup filter → safe probes → priority table → report. |
 
 Deep fingerprint (`stoop run`) fetches the home page **plus a 404 error page and
@@ -159,6 +160,12 @@ stoop run https://app.target.com --config stoop.toml
 
 `stoop run --crawl` runs a bounded crawl first and folds the reachable,
 crawl-discovered endpoints straight into the ranked surface.
+`stoop run --session-dir out/` writes a full engagement bundle (JSON, fingerprint,
+findings, Markdown + HTML report, audit copy) into `out/`.
+
+Deep fingerprint also hashes `/favicon.ico` (sha256) and maps known hashes to a
+tech stack via `data/favicon_hashes.json`; the crawler additionally extracts
+API-looking endpoints passively from JavaScript.
 
 ### Audit log summary
 
