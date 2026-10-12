@@ -3,10 +3,11 @@
 </p>
 
 <p align="center">
+  <a href="https://github.com/Haind03/PeregrineStoop/actions/workflows/ci.yml"><img src="https://github.com/Haind03/PeregrineStoop/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <img src="https://img.shields.io/github/v/release/Haind03/PeregrineStoop?sort=semver" alt="Release">
+  <img src="https://img.shields.io/github/last-commit/Haind03/PeregrineStoop" alt="Last commit">
   <img src="https://img.shields.io/badge/python-3.11%2B-3776AB" alt="Python 3.11+">
   <img src="https://img.shields.io/badge/license-MIT-green" alt="MIT License">
-  <img src="https://img.shields.io/badge/tests-133%20passing-brightgreen" alt="Tests">
-  <img src="https://img.shields.io/badge/deps-stdlib%20%2B%20requests-lightgrey" alt="Dependencies">
   <img src="https://img.shields.io/badge/use-authorized%20testing%20only-red" alt="Authorized use only">
 </p>
 
