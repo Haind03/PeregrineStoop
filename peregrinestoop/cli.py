@@ -45,6 +45,7 @@ from .config import (
 )
 from .probes import run_safe_probes
 from .report import render_html_report, render_report
+from .sarif import to_sarif
 from .state import BudgetTimer, StateStore
 
 _BANNER = rf"""
@@ -420,8 +421,15 @@ def cmd_report(args) -> int:
         with open(args.out, "w", encoding="utf-8") as fh:
             fh.write(content)
         log("+", f"wrote {'HTML' if as_html else 'Markdown'} report -> {args.out}")
-    else:
+    elif not args.sarif:
         print(content)  # stdout
+
+    if args.sarif:
+        doc = to_sarif(host, findings)
+        with open(args.sarif, "w", encoding="utf-8") as fh:
+            json.dump(doc, fh, indent=2)
+        log("+", f"wrote SARIF -> {args.sarif} "
+                 f"({len(doc['runs'][0]['results'])} results)")
     return 0
 
 
@@ -550,6 +558,8 @@ def build_parser() -> argparse.ArgumentParser:
                     help="write here (else stdout); .html extension implies --html")
     rp.add_argument("--html", action="store_true",
                     help="render a self-contained HTML page instead of Markdown")
+    rp.add_argument("--sarif", metavar="FILE",
+                    help="also write findings as SARIF 2.1.0 to this file")
     rp.set_defaults(func=cmd_report)
 
     au = sub.add_parser("audit", help="summarize the JSONL audit log")
