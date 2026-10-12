@@ -73,6 +73,7 @@ simply disabled) rather than crashing.
 | `probes.py` | **Safe active probes (GET/OPTIONS only, non-destructive)**: context-aware reflected-input, open-redirect, CORS reflection, method enumeration. Each reports a *candidate*, never a confirmation. |
 | `report.py` | Render stored fingerprint + findings into a structured **Markdown or self-contained HTML recon report** (incl. CVSS starting-vector templates). |
 | `config.py` | Optional **TOML config profiles** (`tomllib`, stdlib) for default scope/rate/budget/timeout; CLI flags override. |
+| `audit.py` | Summarize the JSONL audit log (`stoop audit`): sent vs blocked, per-host/method/status breakdown, sessions, time span. Offline. |
 | `cli.py` | `stoop` orchestrator: scope gate → deep fingerprint → rank → dedup filter → safe probes → priority table → report. |
 
 Deep fingerprint (`stoop run`) fetches the home page **plus a 404 error page and
@@ -158,6 +159,13 @@ stoop run https://app.target.com --config stoop.toml
 
 `stoop run --crawl` runs a bounded crawl first and folds the reachable,
 crawl-discovered endpoints straight into the ranked surface.
+
+### Audit log summary
+
+```bash
+# review exactly what traffic the toolkit generated during an engagement
+stoop audit --audit-log stoop_audit.jsonl --json summary.json
+```
 
 ### Resume last session
 
