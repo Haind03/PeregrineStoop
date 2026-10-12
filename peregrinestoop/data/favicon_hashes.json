@@ -1,0 +1,4 @@
+{
+  "_comment": "sha256(favicon bytes) -> {tech, note}. Starter set; operators extend it. The hash is always reported in fingerprint notes so you can also look it up in external DBs (Shodan/FavFreak) manually.",
+  "55d461a57cf5743602bdd7d7e19465a9a2f2e170998e33e64cfb01a2e96770c0": {"tech": "ExampleStack", "note": "illustrative entry for tests/docs"}
+}
