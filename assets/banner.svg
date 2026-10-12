@@ -21,9 +21,11 @@
       <path d="M196 54 c10 18 12 40 10 62 l-10 -8 c2 -20 2 -38 0 -54 Z" fill="#E8833A"/>
     </g>
   </g>
-  <g transform="translate(210,0)" fill="#F2F4F8" font-family="Segoe UI, Helvetica, Arial, sans-serif">
-    <text x="0" y="92" font-size="52" font-weight="700">PeregrineStoop</text>
-    <text x="2" y="128" font-size="22" fill="#9FB4CE">Authorized blackbox recon — at a peregrine's stoop.</text>
-    <text x="2" y="160" font-size="16" fill="#6E86A6">HaiND · Post and Telecommunication Institute of Technology</text>
+  <g transform="translate(210,0)" font-family="'Times New Roman', Times, serif">
+    <text x="0" y="96" font-size="58" font-weight="700" letter-spacing="0.5">
+      <tspan fill="#F2F4F8">Peregrine</tspan><tspan fill="#E8833A">Stoop</tspan>
+    </text>
+    <text x="2" y="130" font-size="23" font-style="italic" fill="#AFC2DA">Authorized blackbox recon at a peregrine's stoop.</text>
+    <text x="3" y="162" font-size="16" fill="#7890AE">HaiND &#183; Post and Telecommunication Institute of Technology</text>
   </g>
 </svg>

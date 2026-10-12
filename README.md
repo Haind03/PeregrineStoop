@@ -12,252 +12,231 @@
 
 # PeregrineStoop
 
-> A peregrine's stoop is the fastest hunting move in nature — PeregrineStoop brings that to blackbox recon.
+> A peregrine's stoop is the fastest hunting move in nature. PeregrineStoop brings that speed to blackbox recon.
 
-**PeregrineStoop** is an authorized blackbox-pentest accelerator. It does **not**
-add another raw scanner; it *reduces friction between recon steps* so you spend
-time on reasoning instead of plumbing. Four small CLI modules share one state
-layer, and **every HTTP request passes through a scope gate + append-only audit
-log**.
+**PeregrineStoop** is an authorized blackbox pentest accelerator. It does **not**
+add another raw scanner. Instead it *reduces friction between recon steps* so you
+spend time on reasoning instead of plumbing. The CLI modules share one state
+layer, and **every HTTP request passes through a scope gate and an append-only
+audit log**.
 
-Author / brand: **HaiND from the Post and Telecommunication Institute of Technology**
-Repo: https://github.com/Haind03/PeregrineStoop · CLI: `stoop` · Package: `peregrinestoop`
+* **Author:** HaiND, Post and Telecommunication Institute of Technology
+* **CLI:** `stoop` &nbsp;·&nbsp; **Package:** `peregrinestoop`
+* **Repo:** https://github.com/Haind03/PeregrineStoop
 
----
-
-## ⚠️ Authorization & Safety
+## Authorization and safety
 
 PeregrineStoop is built for **authorized testing only** (HackerOne, Bugcrowd,
 Intigriti, Immunefi, or a signed engagement). It refuses to touch any host that
 is not explicitly in scope.
 
-Non-negotiable guardrails:
+Guardrails that do not bend:
 
 1. **Scope gate.** Every outbound request is checked by `ScopeChecker`.
-   `*.target.com` matches `a.target.com` and `target.com`, **anchored on the
-   dot** so `evil-target.com` does *not* match. Out-of-scope → the request is
-   never sent (raises `ScopeViolation`).
-2. **Append-only audit log** (JSONL) for every request attempt: `url`, `method`,
-   `scope_check`, `status`, `timestamp`, `session_id` — including blocked ones.
-3. **Rate limit** (default 3 req/s), **timeout**, **body-size cap**, and a
-   **User-Agent that declares authorized testing** (`contact=` included).
-4. **Safe methods by default.** Only `GET`/`HEAD`/`OPTIONS`. `PUT`/`POST`/
-   `DELETE`/`PATCH` require `--allow-unsafe` and print a warning.
+   `*.target.com` matches `a.target.com` and `target.com`, anchored on the dot,
+   so `evil-target.com` does **not** match. Out of scope requests are never sent;
+   they raise `ScopeViolation`.
+2. **Audit log.** An append only JSONL record for every request attempt (`url`,
+   `method`, `scope_check`, `status`, `timestamp`, `session_id`), including the
+   blocked ones.
+3. **Rate limit** (default 3 req/s), **timeout**, **body size cap**, and a
+   **User-Agent that declares authorized testing** (with a contact).
+4. **Safe methods by default.** Only `GET`, `HEAD`, `OPTIONS`. The unsafe methods
+   `PUT`, `POST`, `DELETE`, `PATCH` require `--allow-unsafe` and print a warning.
 
-There are **no** mass-targeting, DoS, or detection-evasion features. Confirm a
+There are **no** mass targeting, DoS, or detection evasion features. Confirm a
 host is in your authorized scope before pointing PeregrineStoop at it.
-
----
 
 ## Install
 
 ```bash
-pip install -e .          # editable; installs the `stoop` entrypoint
-# dependencies: Python 3.11+, requests (stdlib otherwise)
+pip install -e .            # installs the `stoop` entrypoint
+pip install -e '.[test]'    # plus pytest and responses (dev only)
 ```
 
-`requests` is the only non-stdlib **runtime** dependency (robust HTTP session:
-TLS verification, streaming, header handling). The test suite additionally uses
-`responses` (dev-only; `pip install -e '.[test]'`) to drive integration tests
-through the real HTTP adapter without network — it is never imported by the
-package itself.
+`requests` is the only **runtime** dependency outside the standard library. The test suite also
+uses `responses` (dev only), which is never imported by the package itself.
 
-Detection is **data-driven**: the fingerprint signature tables live in
-[`peregrinestoop/data/signatures.json`](peregrinestoop/data/signatures.json)
-(cookies, Server/X-Powered-By, body markers, WAF/CDN, security headers) and the
-CVE candidates in
-[`peregrinestoop/data/cve_map.json`](peregrinestoop/data/cve_map.json). Both can
-be extended without touching code; every CVE entry is a *candidate to verify*.
-If either file is missing/corrupt the tool degrades gracefully (that detector is
-simply disabled) rather than crashing.
+Detection is **driven by data files**: the fingerprint signatures live in
+[`data/signatures.json`](peregrinestoop/data/signatures.json) and the CVE
+candidates in [`data/cve_map.json`](peregrinestoop/data/cve_map.json). Both can
+be extended without touching code. If a data file is missing or corrupt, that
+detector is disabled gracefully rather than crashing.
 
----
+## Commands
 
-## Modules
-
-| File | Role |
-|------|------|
-| `common.py` | `ScopeChecker`, `StoopHTTP` (scope gate + audit + rate limit + timeout + UA + body cap), colored stderr logging. |
-| `state.py` | SQLite state & dedup across sessions; URL normalization; 5-minute budget timer; findings store. |
-| `fingerprint.py` | Tech/WAF fingerprint from headers/cookies/body/meta + **security-header analysis** → vuln classes + CVE *candidates* (version guesses flagged low-confidence). Signatures & CVE map load from `data/*.json`. |
-| `crawl.py` | **Bounded, polite link discovery** (same-host, depth/page/budget-limited, scope-gated, dedup, GET-only); seeds from `robots.txt`/`sitemap.xml`. Outputs a snapshot that chains into `diff`. |
-| `diff.py` | Snapshot a surface (content hash + endpoints + params), diff vs baseline, rank by freshness + sensitivity. |
-| `probes.py` | **Safe active probes (GET/OPTIONS only, non-destructive)**: context-aware reflected-input, open-redirect, CORS reflection, method enumeration. Each reports a *candidate*, never a confirmation. |
-| `report.py` | Render stored fingerprint + findings into a structured **Markdown or self-contained HTML recon report** (incl. CVSS starting-vector templates). |
-| `config.py` | Optional **TOML config profiles** (`tomllib`, stdlib) for default scope/rate/budget/timeout; CLI flags override. |
-| `audit.py` | Summarize the JSONL audit log (`stoop audit`): sent vs blocked, per-host/method/status breakdown, sessions, time span. Offline. |
-| `bundle.py` | Write a per-engagement session bundle (`stoop run --session-dir`): JSON payload + fingerprint + findings + MD/HTML report + audit copy. |
-| `cli.py` | `stoop` orchestrator: scope gate → deep fingerprint → rank → dedup filter → safe probes → priority table → report. |
-
-Deep fingerprint (`stoop run`) fetches the home page **plus a 404 error page and
-an OPTIONS request** — error pages often reveal a WAF the home page hides, and
-`Allow` enumerates advertised methods (flagging TRACE/PUT/DELETE).
-
----
+| Command | What it does |
+|---------|--------------|
+| `stoop fingerprint` | Tech and WAF fingerprint of a single URL. |
+| `stoop crawl` | Bounded, scope gated link discovery; seeds from robots.txt and sitemap. |
+| `stoop diff` | Snapshot a surface and diff it against a baseline. |
+| `stoop run` | Full budgeted pipeline: deep fingerprint, rank, safe probes, report. |
+| `stoop probe` | Safe active probes (GET and OPTIONS only). |
+| `stoop report` | Render a Markdown or HTML recon report from stored state. |
+| `stoop audit` | Summarize the JSONL audit log. |
+| `stoop resume` | Show the last session's state. |
 
 ## Usage
 
 Scope is mandatory. Supply it inline or from a file.
 
 ```bash
-# scope file: one pattern per line; '!' = exclude, '#' = comment
-cat scope.txt
+# scope file: one pattern per line; '!' excludes, '#' is a comment
 # *.target.com
 # !admin.target.com
 # 10.0.0.0/8
 ```
 
-### Fingerprint
-
 ```bash
+# fingerprint one URL
 stoop fingerprint https://app.target.com --scope "*.target.com" --json fp.json
-```
 
-### Crawl (bounded link discovery)
+# bounded crawl, writing a snapshot that chains into diff
+stoop crawl https://app.target.com --scope "*.target.com" --depth 1 --max-pages 25 --snapshot base.json
 
-```bash
-# discover same-host endpoints, seed from robots.txt/sitemap, write a snapshot
-stoop crawl https://app.target.com --scope "*.target.com" \
-  --depth 1 --max-pages 25 --snapshot base.json
-# then diff a later crawl against it (see below)
-```
-
-### Diff watcher
-
-```bash
-# first run: snapshot
-stoop diff --url-file urls.txt --scope-file scope.txt --snapshot base.json
-# later: diff against the baseline
+# diff a later crawl against the baseline
 stoop diff --url-file urls.txt --scope-file scope.txt --baseline base.json --json diff.json
-```
 
-### Full pipeline (time-budgeted)
+# full pipeline with a time budget
+stoop run https://app.target.com --scope "*.target.com" --budget 300 --rate 3 --json run.json
 
-```bash
-stoop run https://app.target.com --scope "*.target.com" \
-  --budget 300 --rate 3 --json run.json
-```
+# full pipeline plus a crawl and a saved engagement bundle
+stoop run https://app.target.com --scope "*.target.com" --crawl --session-dir out/
 
-### Safe active probes
-
-```bash
-# GET/OPTIONS only, non-destructive, scope-gated. Reports candidates to verify.
+# safe active probes
 stoop probe https://app.target.com/login --scope "*.target.com" --json probe.json
-# disable individual checks: --no-reflection --no-redirect --no-cors --no-methods
-```
 
-### Report (Markdown or HTML)
-
-```bash
-# aggregate stored fingerprint + findings for a host into a triage report
+# reports
 stoop report https://app.target.com --out report.md
-stoop report https://app.target.com --out report.html   # .html => styled HTML
-stoop report https://app.target.com --html              # HTML to stdout
-```
+stoop report https://app.target.com --out report.html
 
-### Config profile
-
-```bash
-# keep per-engagement defaults in TOML (CLI flags still override it)
-cat stoop.toml
-# [scope]
-# include = ["*.target.com"]
-# exclude = ["admin.target.com"]
-# [http]
-# rate = 2
-# budget = 600
-# timeout = 20
-stoop run https://app.target.com --config stoop.toml
-```
-
-`stoop run --crawl` runs a bounded crawl first and folds the reachable,
-crawl-discovered endpoints straight into the ranked surface.
-`stoop run --session-dir out/` writes a full engagement bundle (JSON, fingerprint,
-findings, Markdown + HTML report, audit copy) into `out/`.
-
-Deep fingerprint also hashes `/favicon.ico` (sha256) and maps known hashes to a
-tech stack via `data/favicon_hashes.json`; the crawler additionally extracts
-API-looking endpoints passively from JavaScript.
-
-### Audit log summary
-
-```bash
-# review exactly what traffic the toolkit generated during an engagement
+# audit log summary
 stoop audit --audit-log stoop_audit.jsonl --json summary.json
 ```
 
-### Resume last session
+Config profiles keep per engagement defaults in TOML; CLI flags still override
+them:
 
-```bash
-stoop resume --json -
+```toml
+# stoop.toml
+[scope]
+include = ["*.target.com"]
+exclude = ["admin.target.com"]
+
+[http]
+rate = 2
+budget = 600
+timeout = 20
 ```
 
-### Common flags
+```bash
+stoop run https://app.target.com --config stoop.toml
+```
 
-`--scope PATTERN` (repeatable) · `--scope-file FILE` · `--budget SECONDS` ·
-`--rate N` · `--timeout SECONDS` · `--insecure` (lab TLS) ·
-`--allow-unsafe` · `--audit-log FILE` · `--state-db FILE` · `--json FILE`
-
-Output convention: **stdout = machine-readable JSON**, **stderr = human log and
-the priority table** (colored `[+] [-] [!] [*]`).
-
----
+Output convention: **stdout** is machine readable JSON, **stderr** is the human
+log and the priority table (colored `[+] [-] [!] [*]`).
 
 ## Detection coverage
 
-**Stacks:** PHP, Java (Tomcat/Jetty/JBoss/WebLogic/WebSphere/GlassFish), ASP.NET
-(+Core/Kestrel), Node (Express/Next/Nuxt), Python (Django/Flask/Gunicorn/Uvicorn/
-Daphne), Ruby (Rails/Rack/Passenger), ColdFusion, Symfony/Yii/CodeIgniter/Laravel,
-Spring Boot, Drupal/Joomla/Magento/WordPress, Angular/React/Vue, Jenkins/GitLab/
-Atlassian/Grafana/phpMyAdmin.
+**Stacks**
 
-**WAF/CDN:** Cloudflare, Akamai, Imperva Incapsula, F5 BIG-IP ASM, AWS CloudFront/
-WAF, Sucuri, Fastly, ModSecurity, Wordfence, Barracuda, FortiWeb, Citrix NetScaler,
-Azure Front Door, Reblaze, DenyAll, Edgecast.
+* PHP, ASP.NET (Core and Kestrel), Node (Express, Next, Nuxt)
+* Java (Tomcat, Jetty, JBoss, WebLogic, WebSphere, GlassFish)
+* Python (Django, Flask, Gunicorn, Uvicorn, Daphne), Ruby (Rails, Rack, Passenger)
+* ColdFusion, Symfony, Yii, CodeIgniter, Laravel, Spring Boot
+* Drupal, Joomla, Magento, WordPress, Angular, React, Vue
+* Jenkins, GitLab, Atlassian, Grafana, phpMyAdmin
 
-**Vuln classes routed:** injection (sqli/nosqli/ssti/spel/ognl/csti), file issues
-(lfi/path-traversal/upload), deserialization, SSRF, XXE, proto-pollution,
-IDOR/mass-assignment, viewstate/padding-oracle, debug/actuator leaks,
-dangerous-methods/XST, and security-header gaps (missing HSTS/CSP, clickjacking,
-CORS-misconfig, mime-sniffing, version-disclosure).
+**WAF and CDN**
 
-**Active-probe candidates (safe, GET/OPTIONS):** context-aware reflected-input —
-a **stdlib `html.parser` DOM pass** (no extra dependency) classifies the
-reflection context (HTML text / attribute / `<script>` / comment) the way a
-browser tokenizes it, so a quote/bracket breakout shows up as a context change;
-combined with which XSS metacharacters survive unencoded. Plus open-redirect,
-CORS reflection (with/without credentials), and dangerous HTTP methods. All
-non-destructive and reported as *candidates to verify*.
+* Cloudflare, Akamai, Imperva Incapsula, F5 BIG-IP ASM, AWS CloudFront, AWS WAF
+* Sucuri, Fastly, ModSecurity, Wordfence, Barracuda, FortiWeb
+* Citrix NetScaler, Azure Front Door, Reblaze, DenyAll, Edgecast
 
-**CVSS scaffolding:** `stoop report` prints a *suggested* CVSS 3.1 starting
-vector per finding kind (reflected-input, open-redirect, CORS, dangerous
-methods), explicitly labelled a template to re-judge — it never reports an
-unverified score.
+**Vulnerability classes routed for prioritization**
 
-**CVE candidates** (verify-only, version-gated): CVE-2021-41773 (Apache),
-CVE-2020-1938 (Ghostcat), CVE-2022-22965 (Spring4Shell), CVE-2022-26134
-(Confluence), CVE-2018-7600 (Drupalgeddon2), CVE-2020-14882 (WebLogic), Jenkins
-script console, Werkzeug debug PIN, and others. Each is a *candidate to verify*,
-never an assertion.
+* Injection: sqli, nosqli, ssti, spel, ognl, csti
+* Files: lfi, path traversal, upload
+* Logic and data: idor, mass assignment, deserialization, ssrf, xxe, proto pollution
+* Platform: viewstate, padding oracle, debug and actuator leaks, dangerous methods, xst
+* Security header gaps: missing HSTS, missing CSP, clickjacking, CORS misconfig, mime sniffing, version disclosure
 
-## Tests
+**Active probe candidates** (safe, GET and OPTIONS only, each a candidate to verify)
+
+* Reflected input, with a stdlib `html.parser` DOM pass that classifies the
+  reflection context (HTML text, attribute, script, comment) and reports which
+  XSS metacharacters survived unencoded
+* Open redirect, CORS reflection (with or without credentials), dangerous HTTP methods
+
+**CVE candidates** (verify only, version aware where a version is parsed)
+
+* CVE-2021-41773 (Apache), CVE-2020-1938 (Ghostcat), CVE-2022-22965 (Spring4Shell)
+* CVE-2022-26134 (Confluence), CVE-2018-7600 (Drupalgeddon2), CVE-2020-14882 (WebLogic)
+* Jenkins script console, Werkzeug debug PIN, and others
+
+Every CVE entry is a candidate to verify, never an assertion. When a concrete
+version is parsed, candidates are narrowed to the affected version range.
+
+## Reports
+
+`stoop report` aggregates the stored fingerprint and findings into a structured
+report, in Markdown or as a standalone HTML page (theme aware, no external
+assets). It includes suggested CVSS 3.1 starting vectors per finding kind, which
+are templates to reassess, never an auto scored result.
+
+`stoop run --session-dir out/` writes a per engagement bundle (`run.json`,
+`fingerprint.json`, `findings.json`, `report.md`, `report.html`, and a copy of
+the audit log) into one folder.
+
+## Testing
 
 ```bash
-pip install -e '.[test]'   # pytest + responses (dev-only)
+pip install -e '.[test]'
 pytest -q
 ```
 
-Covers: scope matching (`*.target.com` vs `evil-target.com`, exclude, IP/CIDR),
-the HTTP gate refusing out-of-scope and unsafe methods *before sending*,
-**streaming body-size cap + audit on success/error**, URL dedup normalization,
-fingerprint inference across every stack/WAF/security-header case above, deep
-fingerprint (404 WAF merge + OPTIONS methods), the **safe active probes**
-(context-aware reflection/open-redirect/CORS/methods), the data-driven CVE map,
-Markdown report rendering (incl. CVSS templates), the bounded crawler
-(BFS/dedup/robots seeding/limits), snapshot diffing, and **full CLI pipelines**
-(`fingerprint`/`diff`/`run`/`probe`/`crawl`/`report`/`resume`) end-to-end. A separate **`responses`-backed integration suite** drives the real
-requests/urllib3 stack — genuine gzip/deflate (and brotli when available)
-decoding, body-cap on decoded and on identity bodies, redirect-read-not-followed,
-HEAD handling, OPTIONS method enumeration, and the scope gate firing before the
-adapter. **No test makes a real network call**; fakes and `responses` intercept
-everything.
+The suite is fully offline. No test makes a real network call. Coverage includes:
+
+* Scope matching (`*.target.com` vs `evil-target.com`, exclude rules, IP and CIDR)
+* The HTTP gate refusing out of scope and unsafe methods before any packet is sent
+* Streaming body size cap and audit on both success and error
+* URL dedup normalization and cross session state
+* Fingerprint inference across every stack, WAF, and security header case
+* Deep fingerprint (404 WAF merge, OPTIONS methods, favicon hash)
+* Safe probes, the bounded crawler, snapshot diffing, and the CVE map
+* Markdown and HTML report rendering, including the CVSS templates
+* A `responses` backed integration suite over the real requests and urllib3 stack
+  (gzip and deflate decoding, body cap, redirect read but not followed, scope gate
+  before the adapter)
+* A live smoke harness that runs the pipeline against a real local HTTP server
+
+## Practice targets
+
+The [`examples/targets`](examples/targets) folder ships small, intentionally
+fingerprintable apps in PHP and Node.js that you can run on localhost to try the
+toolkit end to end (authorized self testing only):
+
+```bash
+php -S 127.0.0.1:8000 -t examples/targets/php
+stoop run http://127.0.0.1:8000/ --scope 127.0.0.1 --crawl --session-dir out/
+```
+
+## Project layout
+
+| File | Role |
+|------|------|
+| `common.py` | `ScopeChecker` and `StoopHTTP` (scope gate, audit, rate limit, timeout, UA, body cap), colored logging. |
+| `state.py` | SQLite state and dedup across sessions, URL normalization, budget timer, findings store. |
+| `fingerprint.py` | Tech and WAF fingerprint, security header analysis, favicon hash, version aware CVE routing. |
+| `crawl.py` | Bounded, scope gated crawler with robots seeding and passive JS endpoint extraction. |
+| `diff.py` | Surface snapshot and diff, ranked by freshness and sensitivity. |
+| `probes.py` | Safe active probes (GET and OPTIONS only). |
+| `report.py` | Markdown and HTML reports with CVSS starting vectors. |
+| `bundle.py` | Per engagement session bundle writer. |
+| `config.py` | TOML config profiles (stdlib `tomllib`). |
+| `audit.py` | Audit log summary. |
+| `cli.py` | The `stoop` orchestrator. |
+
+## License
+
+MIT. See [LICENSE](LICENSE). Authorized, responsible testing only.
