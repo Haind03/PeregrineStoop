@@ -137,6 +137,33 @@ stoop run https://app.target.com --config stoop.toml
 Output convention: **stdout** is machine readable JSON, **stderr** is the human
 log and the priority table (colored `[+] [-] [!] [*]`).
 
+## Example
+
+Running the full pipeline against a local practice target:
+
+```text
+$ stoop run http://127.0.0.1:8001/ --scope 127.0.0.1 --crawl
+[*] fingerprinted 127.0.0.1: server=nginx tech=['nginx', 'Express / Node.js']
+[*] crawl 127.0.0.1: 3 pages, 3 links (frontier exhausted)
+[+] candidate [high] reflected-input: param 'q' reflected in HTML text with
+    '<' and '>' unencoded (tag injection); context=html, stable
+
+  PRIORITY SURFACE  127.0.0.1
+  server=nginx  waf=None  lang=nodejs
+  vuln-classes: proto-pollution, nosqli, missing-hsts, missing-csp, clickjacking
+
+  SCORE  STATUS  PATH
+      5     200  /admin/panel
+      5     200  /api/
+      5     200  /actuator/health
+      3     200  /robots.txt
+
+  ACTIVE-PROBE CANDIDATES (verify manually):
+  [high] reflected-input: param 'q' reflected in HTML text, tag injection
+```
+
+Every candidate is a lead to verify by hand, never a confirmed finding.
+
 ## Detection coverage
 
 **Stacks**
