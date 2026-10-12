@@ -33,6 +33,7 @@ __all__ = [
     "favicon_hash",
     "load_favicon_map",
     "lookup_favicon",
+    "version_matches",
 ]
 
 _META_GENERATOR = re.compile(
@@ -358,17 +359,67 @@ def lookup_favicon(h: str, _map: dict | None = None) -> dict | None:
     return m.get(h)
 
 
+def _ver_tuple(v: str) -> tuple[int, ...]:
+    return tuple(int(x) for x in re.findall(r"\d+", v)) or (0,)
+
+
+def _cmp_ver(a: tuple[int, ...], b: tuple[int, ...]) -> int:
+    n = max(len(a), len(b))
+    a = a + (0,) * (n - len(a))
+    b = b + (0,) * (n - len(b))
+    return (a > b) - (a < b)
+
+
+def version_matches(version: str, spec: str) -> bool:
+    """Does ``version`` satisfy ``spec``?
+
+    ``spec`` is comma-separated clauses (AND), each ``<op><version>`` with op in
+    ``== < <= > >=`` (default ``==``). Example: ``">=2.4.0,<2.4.50"``.
+    """
+    vt = _ver_tuple(version)
+    for clause in spec.split(","):
+        clause = clause.strip()
+        if not clause:
+            continue
+        m = re.match(r"(==|<=|>=|<|>|=)?\s*v?([0-9][0-9.]*)", clause)
+        if not m:
+            return False
+        op = m.group(1) or "=="
+        op = "==" if op == "=" else op
+        c = _cmp_ver(vt, _ver_tuple(m.group(2)))
+        ok = {"==": c == 0, "<": c < 0, "<=": c <= 0,
+              ">": c > 0, ">=": c >= 0}[op]
+        if not ok:
+            return False
+    return True
+
+
 def _route_cves(fp: Fingerprint) -> None:
     for t in fp.tech:
-        base = re.sub(r"\s+\d.*$", "", t["name"]).strip()
+        name = t["name"]
+        base = re.sub(r"\s+\d.*$", "", name).strip()
+        mver = re.search(r"(\d+\.\d+(?:\.\d+)?)", name)
+        version = mver.group(1) if mver else None
         for key, cves in _CVE_MAP.items():
-            if key == base or key == t["name"]:
-                for c in cves:
-                    if not any(
-                        x["cve"] == c["cve"] and x.get("for") == t["name"]
-                        for x in fp.cve_candidates
-                    ):
-                        fp.cve_candidates.append({**c, "for": t["name"]})
+            if key != base and key != name:
+                continue
+            for c in cves:
+                affected = c.get("affected")
+                cand = {k: v for k, v in c.items() if k != "affected"}
+                cand["for"] = name
+                if affected and version:
+                    if version_matches(version, affected):
+                        cand["confidence"] = "medium"
+                        cand["version_match"] = f"{version} satisfies {affected}"
+                    else:
+                        continue  # parsed version is NOT in the affected range
+                elif affected and not version:
+                    cand["note"] = (
+                        f"{cand.get('note', '')} (affects {affected}; "
+                        "version unknown)").strip()
+                if not any(x["cve"] == cand["cve"] and x.get("for") == name
+                           for x in fp.cve_candidates):
+                    fp.cve_candidates.append(cand)
 
 
 def fingerprint_host(http: StoopHTTP, base_url: str) -> Fingerprint:
