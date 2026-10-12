@@ -33,6 +33,7 @@ from .diff import (
 )
 from .fingerprint import fingerprint_host, fingerprint_host_deep
 from .audit import format_text, load_audit, summarize_audit
+from .bundle import write_bundle
 from .crawl import crawl_site
 from .config import (
     BUDGET_DEFAULT,
@@ -242,7 +243,8 @@ def cmd_run(args) -> int:
     store.save_fingerprint(fp.host, fp.to_dict())
 
     # 2) rank + probe safe surface (dedup-filtered, budget-aware)
-    base = f"{urlsplit(args.url).scheme}://{host}"
+    _u = urlsplit(args.url)
+    base = f"{_u.scheme}://{_u.netloc}"   # netloc keeps a non-default port
     surface: list[dict] = []
     probe_paths = list(_PROBE_PATHS)   # local copy; never mutate the module list
 
@@ -332,6 +334,11 @@ def cmd_run(args) -> int:
     }
     store.touch_session(sid, host)
     store.close()
+
+    if getattr(args, "session_dir", None):
+        files = write_bundle(args.session_dir, payload, audit_path=args.audit_log)
+        log("+", f"session bundle -> {args.session_dir} ({len(files)} files)")
+
     _emit_json(args, payload)
     return 0
 
@@ -511,6 +518,8 @@ def build_parser() -> argparse.ArgumentParser:
                     help="run a bounded crawl first to expand the probe surface")
     rn.add_argument("--crawl-pages", type=int, default=15,
                     help="max pages for the in-run crawl (default 15)")
+    rn.add_argument("--session-dir", metavar="DIR",
+                    help="write a bundle (JSON + MD/HTML report + audit) here")
     _add_common_flags(rn)
     rn.set_defaults(func=cmd_run)
 
