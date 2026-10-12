@@ -191,3 +191,28 @@ def test_deep_fingerprint_merges_404_waf_and_options():
     assert "PUT" in fp.allowed_methods
     assert "dangerous-methods" in fp.vuln_classes
     assert "xst" in fp.vuln_classes              # TRACE advertised
+
+
+def test_reflection_unstable_is_downgraded():
+    state = {"n": 0}
+    def handler(m, u, kw):
+        state["n"] += 1
+        if state["n"] == 1:                 # reflect only the first request
+            return make_response(200, {"Content-Type": "text/html"},
+                                 f"<p>{_q(u)}</p>".encode())
+        return make_response(200, {"Content-Type": "text/html"}, b"<p>static</p>")
+    r = probe_reflection(_http(handler), "https://a.target.com/search")
+    assert r is not None
+    assert r.severity == "low"              # not reproduced -> downgraded
+    assert "unconfirmed" in r.detail and "single-sample" in r.detail
+
+
+def test_reflection_reports_single_quote():
+    def handler(m, u, kw):
+        raw = _q(u)
+        v = raw.replace("<", "").replace(">", "").replace('"', "")  # keep only '
+        return make_response(200, {"Content-Type": "text/html"},
+                             f"<input value='{v}'>".encode())
+    r = probe_reflection(_http(handler), "https://a.target.com/search")
+    assert r is not None and r.severity == "medium"
+    assert "single quote" in r.detail and "stable" in r.detail
