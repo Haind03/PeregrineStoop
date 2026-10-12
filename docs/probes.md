@@ -17,3 +17,16 @@ example a cache or a one off echo) and reported at low severity as
 high confidence. For the attribute context the probe also reports which quote
 (single, double, or both) survived unencoded, since that is what an attribute
 breakout needs.
+
+## Deeper CORS checks
+
+The CORS probe tests several crafted Origins, not just one, each a single benign
+GET with an Origin header:
+
+* arbitrary origin reflection
+* the `null` origin
+* a weak suffix pattern (`https://host.attacker.example`)
+* a weak prefix pattern (`https://attacker-host`)
+
+For each origin the server trusts via ACAO it reports a candidate, raised to high
+severity and confidence when credentials are also allowed.

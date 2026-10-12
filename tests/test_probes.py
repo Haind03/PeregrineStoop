@@ -124,17 +124,29 @@ def test_cors_reflection_with_credentials_is_high():
     def handler(m, u, kw):
         origin = kw.get("headers", {}).get("Origin", "")
         return make_response(200, {
-            "Access-Control-Allow-Origin": origin,
+            "Access-Control-Allow-Origin": origin,     # reflects any origin
             "Access-Control-Allow-Credentials": "true",
         }, b"")
-    r = probe_cors(_http(handler), "https://a.target.com/api")
-    assert r is not None and r.severity == "high"
+    res = probe_cors(_http(handler), "https://a.target.com/api")
+    assert res and all(r.severity == "high" for r in res)
+    labels = " ".join(r.detail for r in res)
+    assert "arbitrary-origin" in labels
+    assert "subdomain-suffix" in labels     # weak validation vectors also reflected
+
+
+def test_cors_null_origin_trusted():
+    def handler(m, u, kw):
+        origin = kw.get("headers", {}).get("Origin", "")
+        aco = "null" if origin == "null" else "https://trusted.target.com"
+        return make_response(200, {"Access-Control-Allow-Origin": aco}, b"")
+    res = probe_cors(_http(handler), "https://a.target.com/api")
+    assert len(res) == 1 and "null-origin" in res[0].detail
 
 
 def test_cors_no_reflection():
     handler = lambda m, u, kw: make_response(
         200, {"Access-Control-Allow-Origin": "https://trusted.target.com"}, b"")
-    assert probe_cors(_http(handler), "https://a.target.com/api") is None
+    assert probe_cors(_http(handler), "https://a.target.com/api") == []
 
 
 # -- methods ---------------------------------------------------------------- #
