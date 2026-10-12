@@ -1,0 +1,31 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 240" role="img" aria-label="PeregrineStoop logo">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#0B1E3B"/>
+      <stop offset="1" stop-color="#143A63"/>
+    </linearGradient>
+    <linearGradient id="streak" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#38BDF8" stop-opacity="0"/>
+      <stop offset="1" stop-color="#38BDF8" stop-opacity="0.9"/>
+    </linearGradient>
+  </defs>
+  <rect x="8" y="8" width="224" height="224" rx="48" fill="url(#bg)"/>
+  <!-- speed streaks of the stoop -->
+  <g stroke="url(#streak)" stroke-width="7" stroke-linecap="round" fill="none" opacity="0.8">
+    <line x1="54" y1="40" x2="110" y2="96"/>
+    <line x1="40" y1="78" x2="88" y2="126"/>
+    <line x1="34" y1="120" x2="70" y2="156"/>
+  </g>
+  <!-- peregrine diving (stoop): swept wings + body, pointing down-right -->
+  <g fill="#F2F4F8">
+    <path d="M196 54
+             C150 60 120 86 108 128
+             C132 118 158 112 182 118
+             C160 126 142 142 134 170
+             C156 150 180 140 206 142
+             C182 158 164 180 158 210
+             C196 176 214 128 196 54 Z"/>
+    <!-- leading head/beak accent -->
+    <path d="M196 54 c10 18 12 40 10 62 l-10 -8 c2 -20 2 -38 0 -54 Z" fill="#E8833A"/>
+  </g>
+</svg>
