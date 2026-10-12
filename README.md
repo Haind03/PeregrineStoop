@@ -1,3 +1,15 @@
+<p align="center">
+  <img src="assets/banner.svg" alt="PeregrineStoop" width="680">
+</p>
+
+<p align="center">
+  <img src="https://img.shields.io/badge/python-3.11%2B-3776AB" alt="Python 3.11+">
+  <img src="https://img.shields.io/badge/license-MIT-green" alt="MIT License">
+  <img src="https://img.shields.io/badge/tests-133%20passing-brightgreen" alt="Tests">
+  <img src="https://img.shields.io/badge/deps-stdlib%20%2B%20requests-lightgrey" alt="Dependencies">
+  <img src="https://img.shields.io/badge/use-authorized%20testing%20only-red" alt="Authorized use only">
+</p>
+
 # PeregrineStoop
 
 > A peregrine's stoop is the fastest hunting move in nature — PeregrineStoop brings that to blackbox recon.

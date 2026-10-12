@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 200" role="img" aria-label="PeregrineStoop banner">
+  <defs>
+    <linearGradient id="bbg" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#0B1E3B"/>
+      <stop offset="1" stop-color="#0E2846"/>
+    </linearGradient>
+    <linearGradient id="bst" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#38BDF8" stop-opacity="0"/>
+      <stop offset="1" stop-color="#38BDF8" stop-opacity="0.9"/>
+    </linearGradient>
+  </defs>
+  <rect width="760" height="200" rx="20" fill="url(#bbg)"/>
+  <g transform="translate(36,30)">
+    <rect width="140" height="140" rx="30" fill="#0A1A33"/>
+    <g stroke="url(#bst)" stroke-width="5" stroke-linecap="round" opacity="0.8">
+      <line x1="30" y1="22" x2="66" y2="58"/>
+      <line x1="22" y1="48" x2="54" y2="80"/>
+    </g>
+    <g fill="#F2F4F8" transform="translate(6,2) scale(0.52)">
+      <path d="M196 54 C150 60 120 86 108 128 C132 118 158 112 182 118 C160 126 142 142 134 170 C156 150 180 140 206 142 C182 158 164 180 158 210 C196 176 214 128 196 54 Z"/>
+      <path d="M196 54 c10 18 12 40 10 62 l-10 -8 c2 -20 2 -38 0 -54 Z" fill="#E8833A"/>
+    </g>
+  </g>
+  <g transform="translate(210,0)" fill="#F2F4F8" font-family="Segoe UI, Helvetica, Arial, sans-serif">
+    <text x="0" y="92" font-size="52" font-weight="700">PeregrineStoop</text>
+    <text x="2" y="128" font-size="22" fill="#9FB4CE">Authorized blackbox recon — at a peregrine's stoop.</text>
+    <text x="2" y="160" font-size="16" fill="#6E86A6">HaiND · Post and Telecommunication Institute of Technology</text>
+  </g>
+</svg>
