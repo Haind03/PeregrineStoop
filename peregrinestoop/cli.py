@@ -32,6 +32,7 @@ from .diff import (
     sensitivity,
 )
 from .fingerprint import fingerprint_host, fingerprint_host_deep
+from .audit import format_text, load_audit, summarize_audit
 from .crawl import crawl_site
 from .config import (
     BUDGET_DEFAULT,
@@ -417,6 +418,19 @@ def cmd_report(args) -> int:
     return 0
 
 
+def cmd_audit(args) -> int:
+    entries = load_audit(args.audit_log)
+    if not entries:
+        log("!", f"no audit entries in {args.audit_log}")
+    summary = summarize_audit(entries)
+    print(format_text(summary), file=sys.stderr)
+    if summary.blocked:
+        log("!", f"{summary.blocked} out-of-scope request(s) were blocked "
+                 "(not sent) — good, the scope gate held")
+    _emit_json(args, summary.to_dict())
+    return 0
+
+
 def cmd_resume(args) -> int:
     store = StateStore(args.state_db)
     sess = store.resume()
@@ -528,6 +542,13 @@ def build_parser() -> argparse.ArgumentParser:
     rp.add_argument("--html", action="store_true",
                     help="render a self-contained HTML page instead of Markdown")
     rp.set_defaults(func=cmd_report)
+
+    au = sub.add_parser("audit", help="summarize the JSONL audit log")
+    au.add_argument("--audit-log", default="stoop_audit.jsonl",
+                    help="audit log to summarize")
+    au.add_argument("--json", metavar="FILE",
+                    help="also write the summary JSON to this file")
+    au.set_defaults(func=cmd_audit)
 
     rs = sub.add_parser("resume", help="show the last session's state")
     rs.add_argument("--state-db", default=".stoop_state.sqlite")
