@@ -159,13 +159,19 @@ def _survived_specials(body: str, marker: str) -> list[str]:
     return [c for c in _SPECIAL if c in window]
 
 
-def probe_reflection(http: StoopHTTP, url: str, param: str = "q") -> ProbeResult | None:
+def probe_reflection(http: StoopHTTP, url: str, param: str = "q",
+                     confirm: bool = True) -> ProbeResult | None:
     """Inject a benign canary and classify the reflection context + encoding.
 
     The canary appends ``"'<>`` after a unique marker so we can see which XSS
     metacharacters survive unencoded and in what context (HTML text, attribute,
-    JS or comment). Nothing is executed — the value is only reflected — so this
+    JS or comment). Nothing is executed; the value is only reflected, so this
     stays a non-destructive lead, reported as a candidate to verify.
+
+    When ``confirm`` is set, a second request with a fresh marker checks that the
+    reflection is stable (reproducible), which cuts false positives from caches
+    or one off echoes. For the attribute context it also reports which quote
+    survived, since that is what an attribute breakout needs.
     """
     marker = "prgstoop" + secrets.token_hex(4)
     canary = marker + "\"'<>"
@@ -186,6 +192,15 @@ def probe_reflection(http: StoopHTTP, url: str, param: str = "q") -> ProbeResult
     context, where = _classify_context(body, marker)
     survived = _survived_specials(body, marker)
 
+    # which quote survived (matters for an attribute breakout)
+    quote = ""
+    if '"' in survived and "'" in survived:
+        quote = "both quotes"
+    elif '"' in survived:
+        quote = "double quote"
+    elif "'" in survived:
+        quote = "single quote"
+
     # severity from how exploitable the context+encoding looks
     if not survived:
         severity, confidence = "info", "low"
@@ -196,26 +211,46 @@ def probe_reflection(http: StoopHTTP, url: str, param: str = "q") -> ProbeResult
     elif context == "html" and "<" in survived and ">" in survived:
         severity, confidence = "high", "medium"
         lead = "reflected in HTML text with '<' and '>' unencoded (tag injection)"
-    elif context == "attribute" and ('"' in survived or "'" in survived):
+    elif context == "attribute" and quote:
         severity, confidence = "medium", "medium"
-        lead = "reflected inside an attribute with a quote unencoded (attr breakout)"
+        lead = f"reflected inside an attribute with {quote} unencoded (attr breakout)"
     else:
         severity, confidence = "low", "low"
         lead = "reflected with some metacharacters unencoded"
 
     if not htmlish and severity in ("high", "medium"):
-        # not served as HTML — downgrade (e.g. JSON reflecting input)
+        # not served as HTML, so downgrade (e.g. JSON reflecting input)
         severity, confidence = "low", "low"
-        lead += " (non-HTML content-type — lower impact)"
+        lead += " (non-HTML content-type, lower impact)"
+
+    # stability check: reproduce with a fresh marker
+    stable = True
+    if confirm:
+        marker2 = "prgstoop" + secrets.token_hex(4)
+        try:
+            resp2 = http.get(_with_param(url, param, marker2))
+            stable = marker2 in _body_text(resp2)
+        except ScopeViolation:
+            raise
+        except Exception:  # noqa: BLE001
+            stable = True  # could not re-check; do not penalize
+    if confirm and not stable:
+        # reflection did not reproduce: likely noise, drop to a low lead
+        severity = "low" if severity != "info" else "info"
+        confidence = "low"
+        lead = "unconfirmed (not reproduced on a second request): " + lead
+    elif stable and confidence == "medium":
+        confidence = "high"   # reproducible reflection in an exploitable context
 
     loc = f"context={context}" + (f" ({where})" if where else "")
+    note = "stable" if stable else "single-sample"
     return ProbeResult(
         kind="reflected-input", url=test_url, severity=severity,
         confidence=confidence,
         detail=f"param '{param}': {lead}; {loc}, "
-               f"survived={''.join(survived) or 'none'}, "
-               f"content-type={ctype or 'unknown'} — verify manually",
-        evidence=f"marker {marker} reflected, unencoded chars: "
+               f"survived={''.join(survived) or 'none'}, {note}, "
+               f"content-type={ctype or 'unknown'}, verify manually",
+        evidence=f"marker {marker} reflected ({note}), unencoded chars: "
                  f"{''.join(survived) or 'none'}",
     )
 
