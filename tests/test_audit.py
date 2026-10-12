@@ -74,3 +74,41 @@ def test_cli_audit(tmp_path):
     assert rc == 0
     data = json.loads(out.read_text())
     assert data["total"] == 2 and data["blocked"] == 1
+
+
+# --- filters + CSV --------------------------------------------------------- #
+
+def test_filter_entries_by_host_and_session():
+    from peregrinestoop.audit import filter_entries
+    entries = [
+        _entry(session_id="s1"),
+        _entry(scope_check="out-of-scope", url="https://evil.com/", session_id="s2"),
+        _entry(session_id="s1", url="https://a.target.com/x"),
+    ]
+    assert len(filter_entries(entries, host="a.target.com")) == 2
+    assert len(filter_entries(entries, host="evil.com")) == 1
+    assert len(filter_entries(entries, session="s1")) == 2
+    assert len(filter_entries(entries, host="a.target.com", session="s1")) == 2
+
+
+def test_to_csv_header_and_rows():
+    from peregrinestoop.audit import to_csv
+    csv_text = to_csv([_entry(iso="2026-01-01T00:00:00Z")])
+    lines = csv_text.strip().splitlines()
+    assert lines[0] == "iso,session_id,method,url,scope_check,status,note"
+    assert "a.target.com" in lines[1]
+
+
+def test_cli_audit_csv_and_filter(tmp_path):
+    path = _write(tmp_path, [
+        _entry(session_id="s1"),
+        _entry(scope_check="out-of-scope", status=None,
+               url="https://evil.com/", session_id="s2"),
+    ])
+    csv_out = tmp_path / "rows.csv"
+    rc = cli.main(["audit", "--audit-log", path, "--host", "a.target.com",
+                   "--csv", str(csv_out)])
+    assert rc == 0
+    rows = csv_out.read_text().strip().splitlines()
+    assert len(rows) == 2          # header + 1 filtered row (a.target.com only)
+    assert "evil.com" not in csv_out.read_text()

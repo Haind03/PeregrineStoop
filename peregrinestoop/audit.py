@@ -17,7 +17,8 @@ import time
 from dataclasses import dataclass, field
 from urllib.parse import urlsplit
 
-__all__ = ["load_audit", "summarize_audit", "AuditSummary"]
+__all__ = ["load_audit", "summarize_audit", "AuditSummary",
+           "filter_entries", "to_csv"]
 
 
 def load_audit(path: str) -> list[dict]:
@@ -36,6 +37,39 @@ def load_audit(path: str) -> list[dict]:
     except FileNotFoundError:
         return []
     return entries
+
+
+def _entry_host(e: dict) -> str:
+    scope = str(e.get("scope_check", ""))
+    if scope.startswith("in-scope:"):
+        return scope.split(":", 1)[1]
+    return urlsplit(str(e.get("url", ""))).hostname or ""
+
+
+def filter_entries(entries: list[dict], *, host: str | None = None,
+                   session: str | None = None) -> list[dict]:
+    """Return the subset of entries matching the given host and/or session."""
+    out = entries
+    if host:
+        h = host.lower()
+        out = [e for e in out if _entry_host(e).lower() == h]
+    if session:
+        out = [e for e in out if str(e.get("session_id", "")) == session]
+    return out
+
+
+def to_csv(entries: list[dict]) -> str:
+    """Render entries as CSV (one row per request attempt)."""
+    import csv
+    import io
+
+    cols = ["iso", "session_id", "method", "url", "scope_check", "status", "note"]
+    buf = io.StringIO()
+    w = csv.DictWriter(buf, fieldnames=cols, extrasaction="ignore")
+    w.writeheader()
+    for e in entries:
+        w.writerow({c: e.get(c, "") for c in cols})
+    return buf.getvalue()
 
 
 @dataclass
