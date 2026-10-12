@@ -279,25 +279,50 @@ def probe_open_redirect(http: StoopHTTP, url: str,
     return out
 
 
-def probe_cors(http: StoopHTTP, url: str) -> ProbeResult | None:
-    """Send a crafted Origin and check whether ACAO reflects it."""
-    try:
-        resp = http.get(url, headers={"Origin": _CORS_ORIGIN})
-    except ScopeViolation:
-        raise
-    except Exception:  # noqa: BLE001
-        return None
-    aco = resp.headers.get("Access-Control-Allow-Origin", "")
-    acc = resp.headers.get("Access-Control-Allow-Credentials", "").lower()
-    if aco == _CORS_ORIGIN:
-        sev = "high" if acc == "true" else "medium"
-        return ProbeResult(
-            kind="cors-reflection", url=url, severity=sev, confidence="medium",
-            detail="ACAO reflects arbitrary Origin"
-                   + (" WITH credentials" if acc == "true" else ""),
-            evidence=f"ACAO={aco} ACAC={acc or 'n/a'}",
-        )
-    return None
+def _cors_vectors(host: str) -> list[tuple[str, str]]:
+    """Origin values to test, as (label, origin). Benign RFC-2606 markers."""
+    vectors = [
+        ("arbitrary-origin", _CORS_ORIGIN),
+        ("null-origin", "null"),
+    ]
+    if host:
+        # weak origin validation patterns
+        vectors.append(("subdomain-suffix", f"https://{host}.stoop-evil.example"))
+        vectors.append(("prefix-bypass", f"https://stoop-evil-{host}"))
+    return vectors
+
+
+def probe_cors(http: StoopHTTP, url: str) -> list[ProbeResult]:
+    """Test several crafted Origins and report each ACAO that trusts one.
+
+    Covers arbitrary-origin reflection, the ``null`` origin, and two weak
+    validation patterns (an attacker suffix and an attacker prefix on the host).
+    Each is a single benign GET with an ``Origin`` header.
+    """
+    host = urlsplit(url).hostname or ""
+    out: list[ProbeResult] = []
+    for label, origin in _cors_vectors(host):
+        try:
+            resp = http.get(url, headers={"Origin": origin})
+        except ScopeViolation:
+            raise
+        except Exception:  # noqa: BLE001
+            continue
+        aco = resp.headers.get("Access-Control-Allow-Origin", "")
+        acc = resp.headers.get("Access-Control-Allow-Credentials", "").lower()
+        trusts = (aco == origin) or (label == "null-origin" and aco == "null")
+        if not trusts:
+            continue
+        creds = acc == "true"
+        sev = "high" if creds else "medium"
+        out.append(ProbeResult(
+            kind="cors-reflection", url=url, severity=sev,
+            confidence="high" if creds else "medium",
+            detail=f"ACAO trusts {label} ({origin})"
+                   + (" with credentials" if creds else ""),
+            evidence=f"Origin={origin} ACAO={aco} ACAC={acc or 'n/a'}",
+        ))
+    return out
 
 
 def probe_methods(http: StoopHTTP, url: str) -> ProbeResult | None:
@@ -338,9 +363,7 @@ def run_safe_probes(
         if r:
             results.append(r)
     if do_cors:
-        r = probe_cors(http, base_url)
-        if r:
-            results.append(r)
+        results.extend(probe_cors(http, base_url))
     if do_reflection:
         r = probe_reflection(http, base_url, reflection_param)
         if r:
